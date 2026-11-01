@@ -1,86 +1,82 @@
 import React, { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { api, errorMessage } from './services/api';
-import { AnalysisProgress } from './components/AnalysisProgress';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
+import { AnalysisProgress } from './components/AnalysisProgress';
 import { useStudioStore } from './store/useStudioStore';
-import { DashboardPage } from './pages/DashboardPage';
-import { NewAnalysisPage } from './pages/NewAnalysisPage';
-import { EditorPage } from './pages/EditorPage';
-import { DetectorHighlightsPage } from './pages/DetectorHighlightsPage';
-import { ReportComparisonPage } from './pages/ReportComparisonPage';
-import { FlaggedComparisonPage } from './pages/FlaggedComparisonPage';
-import { EvidenceReviewPage } from './pages/EvidenceReviewPage';
-import { OverlapReviewPage } from './pages/OverlapReviewPage';
-import { CitationReviewPage } from './pages/CitationReviewPage';
-import { WritingQualityPage } from './pages/WritingQualityPage';
-import { RevisionHistoryPage } from './pages/RevisionHistoryPage';
-import { ExportCenterPage } from './pages/ExportCenterPage';
-import { SettingsPage } from './pages/SettingsPage';
 
-export const App: React.FC = () => {
-  const { activeTab, activeDocument, triggerRefresh } = useStudioStore();
+// Main Pages
+import { HomePage } from './pages/HomePage';
+import { DocumentsPage } from './pages/DocumentsPage';
+import { NewDocumentWizard } from './pages/NewDocumentWizard';
+import { DocumentWorkspace } from './pages/DocumentWorkspace';
+import { AccountPage } from './pages/AccountPage';
+import { AdminPortal } from './pages/AdminPortal';
 
+const AppLayout: React.FC = () => {
+  const { activeDocument } = useStudioStore();
   const [error, setError] = useState('');
+
   useEffect(() => {
     const onError = (event: Event) => setError((event as CustomEvent<string>).detail);
-    const onRejection = (event: PromiseRejectionEvent) => { event.preventDefault(); setError(errorMessage(event.reason)); };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      event.preventDefault();
+      setError(errorMessage(event.reason));
+    };
     window.addEventListener('studio-error', onError);
     window.addEventListener('unhandledrejection', onRejection);
-    return () => { window.removeEventListener('studio-error', onError); window.removeEventListener('unhandledrejection', onRejection); };
+    return () => {
+      window.removeEventListener('studio-error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
   }, []);
-  useEffect(() => {
-    const id = activeDocument?.id;
-    if (id) api.getDocument(id).then(doc => {
-      if (useStudioStore.getState().activeDocumentId === id) useStudioStore.getState().setActiveDocument(doc);
-    }).catch(() => {});
-  }, [useStudioStore(state => state.refreshTrigger)]);
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return <DashboardPage />;
-      case 'new_analysis':
-        return <NewAnalysisPage />;
-      case 'editor':
-        return <EditorPage />;
-      case 'detector_highlights':
-        return <DetectorHighlightsPage document={activeDocument} onRefreshDocument={triggerRefresh} />;
-      case 'report_comparison':
-        return <ReportComparisonPage document={activeDocument} />;
-      case 'flagged_comparison':
-        return <FlaggedComparisonPage document={activeDocument} />;
-      case 'evidence':
-        return <EvidenceReviewPage document={activeDocument} />;
-      case 'overlap':
-        return <OverlapReviewPage />;
-      case 'citation':
-        return <CitationReviewPage />;
-      case 'quality':
-        return <WritingQualityPage />;
-      case 'revisions':
-        return <RevisionHistoryPage />;
-      case 'export':
-        return <ExportCenterPage />;
-      case 'settings':
-        return <SettingsPage />;
-      default:
-        return <DashboardPage />;
-    }
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
       <Navbar />
-      {error && <div role="alert" className="border-b border-rose-200 bg-rose-50 px-6 py-3 text-sm text-rose-900 flex items-center justify-between gap-4"><span>{error}</span><button onClick={() => setError('')} className="underline shrink-0">Dismiss</button></div>}
+      {error && (
+        <div
+          role="alert"
+          className="border-b border-rose-200 bg-rose-50 px-6 py-3 text-xs text-rose-900 flex items-center justify-between gap-4 z-40 sticky top-16"
+        >
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="underline shrink-0 font-medium">
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main key={activeDocument?.id} className="flex-1 min-w-0 overflow-y-auto">
+        <main className="flex-1 min-w-0 overflow-y-auto">
           <AnalysisProgress />
-          {renderContent()}
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/home" element={<HomePage />} />
+            <Route path="/documents" element={<DocumentsPage />} />
+            <Route path="/documents/new" element={<NewDocumentWizard />} />
+            <Route path="/documents/:id" element={<DocumentWorkspace />} />
+            <Route path="/documents/:id/:subtab" element={<DocumentWorkspace />} />
+            <Route path="/account" element={<AccountPage />} />
+            <Route path="/admin" element={<AdminPortal />} />
+
+            {/* Legacy URL Redirects */}
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/editor" element={<Navigate to="/documents" replace />} />
+            <Route path="/settings" element={<Navigate to="/account" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </main>
       </div>
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <AppLayout />
+    </BrowserRouter>
   );
 };
 

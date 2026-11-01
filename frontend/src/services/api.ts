@@ -94,6 +94,11 @@ export const api = {
     return res.json();
   },
 
+  async eraseMyData() {
+    const res = await checkedFetch(`${API_BASE}/auth/erase-my-data`, { method: 'POST' });
+    return res.json();
+  },
+
   // Payments & Billing (Integer Paise)
   async getPaymentPlans() {
     const res = await checkedFetch(`${API_BASE}/payments/plans`);
@@ -148,6 +153,11 @@ export const api = {
 
   async getMyEntitlements() {
     const res = await checkedFetch(`${API_BASE}/payments/my-entitlements`);
+    return res.json();
+  },
+
+  async getMyPurchases() {
+    const res = await checkedFetch(`${API_BASE}/payments/my-purchases`);
     return res.json();
   },
 

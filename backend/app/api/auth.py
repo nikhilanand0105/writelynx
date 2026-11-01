@@ -158,3 +158,31 @@ def logout(
 
     response.delete_cookie(key="writelynx_session")
     return {"message": "Successfully logged out."}
+
+
+@router.post("/erase-my-data")
+def erase_user_data(
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Enforce Right to Erasure under DPDP Act 2023. Hard deletes all student manuscripts and active sessions."""
+    from backend.app.models.models import Document
+    from backend.app.services.retention_service import RetentionService
+
+    docs = db.query(Document).filter(Document.user_id == user.id).all()
+    deleted_docs_count = len(docs)
+    for doc in docs:
+        RetentionService.hard_delete_document_files(doc, db)
+        db.delete(doc)
+
+    # Invalidate all active sessions
+    db.query(UserSession).filter(UserSession.user_id == user.id).delete()
+    db.commit()
+
+    response.delete_cookie(key="writelynx_session")
+    return {
+        "success": True,
+        "message": f"Successfully erased {deleted_docs_count} manuscripts and invalidated all active sessions under DPDP Act 2023."
+    }
+
