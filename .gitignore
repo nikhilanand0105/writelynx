@@ -1,0 +1,73 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+backend/venv/
+ENV/
+env/
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database & Local Storage
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+backend/storage/*
+!backend/storage/.gitkeep
+!backend/storage/documents/.gitkeep
+!backend/storage/exports/.gitkeep
+!backend/storage/sources/.gitkeep
+!backend/storage/quarantine/.gitkeep
+!backend/storage/temp/.gitkeep
+backend/storage/documents/*
+!backend/storage/documents/.gitkeep
+backend/storage/exports/*
+!backend/storage/exports/.gitkeep
+backend/storage/sources/*
+!backend/storage/sources/.gitkeep
+backend/storage/quarantine/*
+!backend/storage/quarantine/.gitkeep
+backend/storage/temp/*
+!backend/storage/temp/.gitkeep
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Operating System
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Root artifacts from prior external assignments
+/DA3_*
+/QuantLens_*
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
