@@ -32,30 +32,23 @@ export const NewAnalysisPage: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  const runClientEstimate = async (file: File) => {
+  const runClientEstimate = (file: File) => {
     try {
-      const buffer = await file.arrayBuffer();
-      const decoder = new TextDecoder('utf-8', { fatal: false });
-      const text = decoder.decode(buffer);
-      const matches = text.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g);
-      let chars = 0;
-      let words = 0;
-      if (matches && matches.length > 0) {
-        for (const m of matches) {
-          const clean = m.replace(/<[^>]+>/g, '');
-          chars += clean.length;
-          words += clean.trim().split(/\s+/).filter(Boolean).length;
-        }
-      } else {
-        chars = Math.round(file.size * 0.4);
-        words = Math.round(chars / 6);
-      }
-      const estPages = Math.max(1, Math.ceil(chars / 2500));
-      const recTier = chars > 65000 ? 'extended' : chars > 15000 ? 'standard' : 'basic';
+      // Safe client-side file-size metric (0 bytes uploaded to server)
+      const sizeMB = file.size / (1024 * 1024);
+      const approxWords = Math.round(file.size / 220);
+      const approxChars = approxWords * 6;
+      const estPages = Math.max(1, Math.ceil(approxWords / 350));
+      const recTier = approxChars > 65000 || estPages > 20 || sizeMB > 20
+        ? 'extended'
+        : approxChars > 15000 || estPages > 4 || sizeMB > 10
+        ? 'standard'
+        : 'basic';
+
       setClientEstimate({
-        sizeMB: (file.size / (1024 * 1024)).toFixed(2),
-        estimatedChars: chars,
-        estimatedWords: words,
+        sizeMB: sizeMB.toFixed(2),
+        estimatedChars: approxChars,
+        estimatedWords: approxWords,
         estimatedPages: estPages,
         recommendedTier: recTier,
       });
@@ -68,20 +61,50 @@ export const NewAnalysisPage: React.FC = () => {
   const handlePurchaseSlot = async (tier: string) => {
     try {
       setIsUploading(true);
-      setUploadProgress(`Creating Razorpay order for ${tier.toUpperCase()} plan...`);
+      setErrorMsg('');
+      setUploadProgress(`Creating payment order for ${tier.toUpperCase()} plan...`);
       const order = await api.createPaymentOrder(tier, editingMode);
-      setUploadProgress('Fulfilling transaction in Razorpay test mode...');
-      const verifyRes = await api.verifyPayment(
-        order.order_id,
-        `pay_mock_${Date.now()}`,
-        `mock_sig_${order.order_id}_pay_mock_${Date.now()}`
-      );
-      setUploadProgress('Slot issued! Refreshing entitlements...');
-      const updated = await api.getMyEntitlements();
-      setEntitlements(updated);
-      setIsUploading(false);
-      setUploadProgress('');
-      setPaymentSuccessMsg('Payment verified. You can now upload your document.');
+
+      const win = window as any;
+      if (win.Razorpay && order.key_id && !order.key_id.startsWith('mock_')) {
+        const rzp = new win.Razorpay({
+          key: order.key_id,
+          amount: order.amount_paise,
+          currency: order.currency || 'INR',
+          name: 'Writelynx Academic Studio',
+          description: `${tier.toUpperCase()} Plan - Single-Use Manuscript Slot`,
+          order_id: order.order_id,
+          handler: async (response: any) => {
+            try {
+              setUploadProgress('Verifying payment on server...');
+              await api.verifyPayment(order.order_id, response.razorpay_payment_id, response.razorpay_signature);
+              const updated = await api.getMyEntitlements();
+              setEntitlements(updated);
+              setIsUploading(false);
+              setPaymentSuccessMsg('Payment verified. You can now upload your document.');
+            } catch (err: any) {
+              setIsUploading(false);
+              setErrorMsg(err.message || 'Payment verification failed on server.');
+            }
+          },
+          theme: { color: '#4f46e5' },
+        });
+        rzp.open();
+        setIsUploading(false);
+      } else {
+        // Test sandbox mode fallback
+        setUploadProgress('Fulfilling transaction in sandbox test mode...');
+        await api.verifyPayment(
+          order.order_id,
+          `pay_test_${Date.now()}`,
+          `mock_sig_${order.order_id}_pay_test_${Date.now()}`
+        );
+        const updated = await api.getMyEntitlements();
+        setEntitlements(updated);
+        setIsUploading(false);
+        setUploadProgress('');
+        setPaymentSuccessMsg('Payment verified. You can now upload your document.');
+      }
     } catch (err: any) {
       setIsUploading(false);
       setErrorMsg(err.message || 'Payment initiation failed.');
@@ -89,23 +112,57 @@ export const NewAnalysisPage: React.FC = () => {
   };
 
   const handleUpgradeOverage = async () => {
-    if (!overageInfo) return;
+    if (!overageInfo || !overageInfo.recommended_tier) return;
     try {
       setIsUploading(true);
       setUploadProgress(`Initiating upgrade to ${overageInfo.recommended_tier}...`);
       const upgOrder = await api.createUpgradeOrder(overageInfo.entitlement_id, overageInfo.recommended_tier);
-      setUploadProgress(`Fulfilling upgrade for ₹${upgOrder.upgrade_amount_rupees}...`);
-      await api.verifyUpgrade(
-        overageInfo.entitlement_id,
-        overageInfo.recommended_tier,
-        upgOrder.order_id,
-        `pay_upg_${Date.now()}`,
-        `mock_sig_${upgOrder.order_id}_pay_upg_${Date.now()}`
-      );
-      setOverageInfo(null);
-      setUploadProgress('Upgraded! Re-submitting document...');
-      setIsUploading(false);
-      handleStartAnalysis();
+
+      const win = window as any;
+      if (win.Razorpay && upgOrder.key_id && !upgOrder.key_id.startsWith('mock_')) {
+        const rzp = new win.Razorpay({
+          key: upgOrder.key_id,
+          amount: upgOrder.upgrade_amount_paise,
+          currency: upgOrder.currency || 'INR',
+          name: 'Writelynx Plan Upgrade',
+          description: `Upgrade to ${overageInfo.recommended_tier.toUpperCase()}`,
+          order_id: upgOrder.order_id,
+          handler: async (response: any) => {
+            try {
+              setUploadProgress('Verifying upgrade on server...');
+              await api.verifyUpgrade(
+                overageInfo.entitlement_id,
+                overageInfo.recommended_tier,
+                upgOrder.order_id,
+                response.razorpay_payment_id,
+                response.razorpay_signature
+              );
+              setOverageInfo(null);
+              setIsUploading(false);
+              handleStartAnalysis();
+            } catch (err: any) {
+              setIsUploading(false);
+              setErrorMsg(err.message || 'Upgrade verification failed.');
+            }
+          },
+          theme: { color: '#4f46e5' },
+        });
+        rzp.open();
+        setIsUploading(false);
+      } else {
+        setUploadProgress(`Fulfilling upgrade for ₹${upgOrder.upgrade_amount_rupees} in test mode...`);
+        await api.verifyUpgrade(
+          overageInfo.entitlement_id,
+          overageInfo.recommended_tier,
+          upgOrder.order_id,
+          `pay_upg_${Date.now()}`,
+          `mock_sig_${upgOrder.order_id}_pay_upg_${Date.now()}`
+        );
+        setOverageInfo(null);
+        setUploadProgress('Upgraded! Re-submitting document...');
+        setIsUploading(false);
+        handleStartAnalysis();
+      }
     } catch (err: any) {
       setIsUploading(false);
       setErrorMsg(err.message || 'Upgrade failed.');
@@ -161,7 +218,7 @@ export const NewAnalysisPage: React.FC = () => {
           const slot = await api.requestUploadToken(availEnt.id);
           setUploadProgress('Verifying document safety in quarantine...');
           const uploadRes = await api.uploadAuthorizedDocument(slot.upload_token, docFile);
-          if (uploadRes.overLimit) {
+          if (uploadRes.status === 'UNSUPPORTED_OVER_LIMIT' || uploadRes.overLimit) {
             setIsUploading(false);
             setOverageInfo(uploadRes);
             setUploadProgress('');
@@ -172,31 +229,33 @@ export const NewAnalysisPage: React.FC = () => {
           const uploadedDoc = await api.getDocument(docId);
           setActiveDocument(uploadedDoc);
         } else {
-          // Fallback to direct upload if test mode / no entitlement required
-          setUploadProgress('Uploading and reading DOCX structure…');
-          const uploadedDoc = await api.uploadDocument(docFile);
-          docId = uploadedDoc.id;
-          setUploadedId(docId);
-          setActiveDocument(uploadedDoc);
+          // Priority 0.1: Unpaid bypass fallback removed! Require purchasing an entitlement slot.
+          setIsUploading(false);
+          setErrorMsg('No available paid analysis slot. Please purchase a plan tier below before uploading.');
+          return;
         }
       }
-      if (detectorFile) {
+
+      if (detectorFile && docId) {
         setUploadProgress('Extracting detector highlights and matching passages…');
-        await api.uploadDetectorPdf(uploadedDoc.id, detectorFile);
+        await api.uploadDetectorPdf(docId, detectorFile);
         setDetectorFile(null);
       }
       for (const sourceFile of sourceFiles) {
+        if (!docId) break;
         setUploadProgress(`Importing reference: ${sourceFile.name}`);
-        await api.uploadSource(uploadedDoc.id, sourceFile, isExternalReport);
-        setSourceFiles(files => files.filter(file => file !== sourceFile));
+        await api.uploadSource(docId, sourceFile, isExternalReport);
+        setSourceFiles((files) => files.filter((file) => file !== sourceFile));
       }
-      setUploadProgress('Starting background analysis…');
-      await api.startAnalysis(uploadedDoc.id, editingMode, profile);
-      const refreshed = await api.getDocument(uploadedDoc.id);
-      setActiveDocument(refreshed);
-      triggerRefresh();
-      setIsUploading(false);
-      setActiveTab('editor');
+      if (docId) {
+        setUploadProgress('Starting background analysis…');
+        await api.startAnalysis(docId, editingMode, profile);
+        const refreshed = await api.getDocument(docId);
+        setActiveDocument(refreshed);
+        triggerRefresh();
+        setIsUploading(false);
+        setActiveTab('editor');
+      }
 
     } catch (err: any) {
       setIsUploading(false);
@@ -259,27 +318,49 @@ export const NewAnalysisPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 space-y-3 shadow-xs">
           <div className="flex items-center gap-2 font-semibold text-sm text-amber-950">
             <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-            <span>Manuscript Capacity Overage Detected</span>
+            <span>
+              {overageInfo.status === 'UNSUPPORTED_OVER_LIMIT' || !overageInfo.recommended_tier
+                ? 'Maximum System Capacity Exceeded'
+                : 'Manuscript Capacity Overage Detected'}
+            </span>
           </div>
-          <p className="text-xs text-amber-800 leading-relaxed">
-            Your document contains <strong>{overageInfo.actual_pages} pages</strong> ({overageInfo.actual_characters.toLocaleString()} characters),
-            which exceeds the capacity of your <strong>{overageInfo.current_tier.toUpperCase()}</strong> plan (max {overageInfo.max_pages} pages).
-            Your payment is preserved. Upgrade to <strong>{overageInfo.recommended_tier.toUpperCase()}</strong> for the exact price difference:
-          </p>
-          <div className="flex items-center gap-4 pt-1">
-            <button
-              onClick={handleUpgradeOverage}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"
-            >
-              Pay ₹{overageInfo.upgrade_difference_rupees} Upgrade Difference
-            </button>
-            <button
-              onClick={() => { setOverageInfo(null); setDocFile(null); }}
-              className="text-xs text-amber-700 hover:underline"
-            >
-              Cancel and select another document
-            </button>
-          </div>
+          {overageInfo.status === 'UNSUPPORTED_OVER_LIMIT' || !overageInfo.recommended_tier ? (
+            <div className="space-y-3">
+              <p className="text-xs text-amber-800 leading-relaxed">
+                Your document contains <strong>{overageInfo.actual_pages} pages</strong> ({overageInfo.actual_characters.toLocaleString()} characters),
+                which exceeds the maximum 50-page / 160,000-character ceiling of all Writelynx plans.
+                Your paid entitlement has <strong>not</strong> been consumed. Please split your document into smaller chapters before analyzing.
+              </p>
+              <button
+                onClick={() => { setOverageInfo(null); setDocFile(null); }}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+              >
+                Select a Different Manuscript
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                Your document contains <strong>{overageInfo.actual_pages} pages</strong> ({overageInfo.actual_characters.toLocaleString()} characters),
+                which exceeds the capacity of your <strong>{overageInfo.current_tier.toUpperCase()}</strong> plan (max {overageInfo.max_pages} pages).
+                Your payment is preserved. Upgrade to <strong>{overageInfo.recommended_tier.toUpperCase()}</strong> for the exact price difference:
+              </p>
+              <div className="flex items-center gap-4 pt-1">
+                <button
+                  onClick={handleUpgradeOverage}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+                >
+                  Pay ₹{overageInfo.upgrade_difference_rupees} Upgrade Difference
+                </button>
+                <button
+                  onClick={() => { setOverageInfo(null); setDocFile(null); }}
+                  className="text-xs text-amber-700 hover:underline"
+                >
+                  Cancel and select another document
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

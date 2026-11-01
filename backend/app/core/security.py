@@ -26,17 +26,19 @@ def calculate_file_hash(file_path: Path) -> str:
     return sha256.hexdigest()
 
 
-async def save_upload(file: UploadFile, path: Path, allowed_extensions: set[str]) -> str:
+async def save_upload(file: UploadFile, path: Path, allowed_extensions: set[str], max_size_bytes: int = None) -> str:
     from .config import settings
     if Path(file.filename or "").suffix.lower() not in allowed_extensions:
         raise HTTPException(400, "Unsupported file format. Allowed: " + ", ".join(sorted(allowed_extensions)))
     size = 0
+    limit = max_size_bytes or (settings.MAX_FILE_SIZE_MB * 1024 * 1024)
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with path.open("xb") as target:
-            while chunk := await file.read(1024 * 1024):
+        with path.open("wb") as target:
+            while chunk := await file.read(65536):
                 size += len(chunk)
-                if size > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
-                    raise HTTPException(413, f"File exceeds {settings.MAX_FILE_SIZE_MB} MB limit.")
+                if size > limit:
+                    raise HTTPException(413, f"File exceeds {limit // (1024 * 1024)} MB limit.")
                 target.write(chunk)
         if not size:
             raise HTTPException(400, "The uploaded file is empty.")

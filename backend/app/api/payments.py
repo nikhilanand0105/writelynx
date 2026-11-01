@@ -89,6 +89,7 @@ def verify_payment(
 
 
 @router.post("/upgrade-order")
+@router.post("/create-upgrade-order")
 def create_upgrade_order(
     payload: UpgradeOrderRequest,
     user: User = Depends(get_current_user),

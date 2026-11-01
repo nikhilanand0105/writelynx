@@ -92,7 +92,7 @@ def google_login(
         max_age=7 * 86400,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in HTTPS production
+        secure=settings.COOKIE_SECURE or (settings.ENVIRONMENT in ("production", "staging")),
     )
 
     # Count active available entitlements

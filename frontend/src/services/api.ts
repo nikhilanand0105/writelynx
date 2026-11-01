@@ -15,7 +15,7 @@ import {
   GroundedRevision
 } from '../types';
 
-const API_BASE = '/api';
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') + '/api';
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public detail: unknown) {
@@ -32,7 +32,11 @@ export function errorMessage(error: unknown): string {
 // mutation must never reach the caller's success branch.
 async function checkedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   try {
-    const response = await fetch(input, init);
+    const defaultInit: RequestInit = {
+      credentials: 'include',
+      ...init,
+    };
+    const response = await fetch(input, defaultInit);
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       const detail = body?.detail ?? body;

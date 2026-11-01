@@ -12,13 +12,13 @@
         max_size 35MB
     }
 
-    # Security & Privacy Headers (Phase 17 & Phase 18)
+    # Security & Privacy Headers
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com https://checkout.razorpay.com; frame-src https://accounts.google.com https://api.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.writelynx.in https://accounts.google.com https://api.razorpay.com; frame-ancestors 'none';"
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
         -Server
     }
@@ -41,16 +41,14 @@
 
     # Serve compiled React frontend application with client-side SPA fallback
     handle {
-        root * /srv/frontend/dist
+        root * /var/www/writelynx
         try_files {path} /index.html
         file_server
     }
 
     # Access logging
     log {
-        output file /var/log/caddy/access.log {
-            roll_size 10MB
-            roll_keep 5
-        }
+        output stdout
+        format json
     }
 }

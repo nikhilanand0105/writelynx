@@ -1,7 +1,7 @@
-# Writelynx — Comprehensive Open Source Software (OSS) License Audit
+# Writelynx — Open Source Software (OSS) License Audit & PyMuPDF Review
 
 **Document Classification:** Legal & Technical Compliance Audit  
-**Target Platform:** Writelynx (VIT-Exclusive Paid Academic SaaS)  
+**Target Platform:** Writelynx (Academic Manuscript Studio for VIT Students)  
 **Date of Audit:** November 2026  
 **Auditor:** Principal Software Architect & Application Security Engineer  
 
@@ -9,91 +9,64 @@
 
 ## 1. Executive Summary
 
-Writelynx is a commercial Software-as-a-Service (SaaS) application targeting paying students at Vellore Institute of Technology. A critical commercial requirement is ensuring that all third-party libraries, dependencies, and packages used across the backend and frontend are legally compliant with proprietary, commercial SaaS operations and do not impose viral copyleft obligations (such as forcing the open-sourcing of the proprietary Writelynx application).
-
-This audit evaluates:
-1. **Backend Dependencies (Python 3.11+ / FastAPI / SQLAlchemy)**
-2. **Frontend Dependencies (React 18 / TypeScript / Vite / Tailwind)**
-3. **Special In-Depth Review of AGPL Dependencies (PyMuPDF / MuPDF)** and the isolation strategy.
+Writelynx is an academic editing and document analysis platform intended for paying students. This audit provides an evidence-based assessment of all dependencies, specifically reconciling code reality against licensing obligations.
 
 ---
 
-## 2. Backend Dependency License Inventory
+## 2. Dependency License Inventory
 
-| Package | Version | Declared License | Commercial SaaS Permissible? | Notes |
+| Package | Version | Declared License | Commercial SaaS Compatibility | Notes |
 |---|---|---|---|---|
-| **fastapi** | `>=0.110.0` | MIT | **Yes** | Permissive; standard commercial web framework. |
-| **uvicorn** | `>=0.28.0` | BSD-3-Clause | **Yes** | Permissive ASGI server. |
-| **pydantic** | `>=2.6.0` | MIT | **Yes** | Permissive data validation library. |
-| **pydantic-settings** | `>=2.2.0` | MIT | **Yes** | Permissive environment variable loader. |
-| **sqlalchemy** | `>=2.0.28` | MIT | **Yes** | Permissive ORM & SQL toolkit. |
-| **python-docx** | `>=1.1.0` | MIT | **Yes** | Permissive Word (.docx) processing library. |
-| **lxml** | `>=5.1.0` | BSD-3-Clause | **Yes** | High-performance XML/HTML parser. |
-| **defusedxml** | `>=0.7.1` | Python-2.0 / PSF | **Yes** | Permissive XML security wrapper. |
-| **scikit-learn** | `>=1.4.0` | BSD-3-Clause | **Yes** | Permissive machine learning & vectorization toolkit. |
-| **rapidfuzz** | `>=3.6.0` | MIT | **Yes** | High-speed C++ string similarity matching. |
-| **pillow** | `>=10.2.0` | HPND | **Yes** | Python Imaging Library license (historically permissive). |
-| **httpx** | `>=0.27.0` | BSD-3-Clause | **Yes** | Permissive HTTP client for AI model gateways. |
-| **aiofiles** | `>=23.2.1` | Apache-2.0 | **Yes** | Permissive asynchronous filesystem library. |
-| **python-multipart** | `>=0.0.9` | Apache-2.0 | **Yes** | Permissive form/multipart file streaming. |
-| **google-auth** | `>=2.28.0` | Apache-2.0 | **Yes** | Official Google OAuth token validation library. |
-| **razorpay** | `>=1.4.1` | MIT | **Yes** | Official Razorpay payment gateway integration. |
-| **alembic** | `>=1.13.0` | MIT | **Yes** | Database migration engine. |
-| **pymupdf** | `>=1.24.0` | **GNU AGPLv3** / Commercial | **CONDITIONAL** | *See Section 4 for detailed isolation & mitigation plan.* |
+| **fastapi** | `>=0.110.0` | MIT | Permissible | High-performance asynchronous web framework |
+| **uvicorn** | `>=0.28.0` | BSD-3-Clause | Permissible | Standard ASGI production server |
+| **pydantic** | `>=2.6.0` | MIT | Permissible | Data parsing and validation |
+| **pydantic-settings** | `>=2.2.0` | MIT | Permissible | Environment settings parsing |
+| **sqlalchemy** | `>=2.0.28` | MIT | Permissible | ORM and SQL toolkit |
+| **python-docx** | `>=1.1.0` | MIT | Permissible | Primary OOXML Word document parsing and editing |
+| **lxml** | `>=5.1.0` | BSD-3-Clause | Permissible | High-performance XML/HTML processing |
+| **defusedxml** | `>=0.7.1` | Python-2.0 / PSF | Permissible | XML vulnerability defense wrapper |
+| **scikit-learn** | `>=1.4.0` | BSD-3-Clause | Permissible | TF-IDF local text vectorization |
+| **rapidfuzz** | `>=3.6.0` | MIT | Permissible | High-speed C++ string similarity matching |
+| **pillow** | `>=10.2.0` | HPND | Permissible | Image inspection & validation |
+| **httpx** | `>=0.27.0` | BSD-3-Clause | Permissible | Asynchronous HTTP client for provider APIs |
+| **aiofiles** | `>=23.2.1` | Apache-2.0 | Permissible | Asynchronous file I/O |
+| **python-multipart** | `>=0.0.9` | Apache-2.0 | Permissible | Streaming multipart file uploads |
+| **google-auth** | `>=2.28.0` | Apache-2.0 | Permissible | Google OAuth2 ID token verification |
+| **razorpay** | `>=2.0.0` | MIT | Permissible | Official Razorpay payment gateway integration |
+| **boto3** | `>=1.34.0` | Apache-2.0 | Permissible | Cloudflare R2 object storage SDK |
+| **psycopg2-binary** | `>=2.9.9` | LGPL with exception | Permissible | PostgreSQL database driver |
+| **alembic** | `>=1.13.0` | MIT | Permissible | Database schema migrations |
+| **pymupdf** | `>=1.24.0` | **GNU AGPLv3 / Commercial** | **REQUIRES OWNER ACTION** | Used for vector highlight extraction & layout rendering |
+
+All frontend runtime dependencies (React, Vite, Tailwind, Zustand, React Query, Lucide) are licensed under permissive open-source licenses (MIT, ISC, Apache-2.0, BSD-3-Clause).
 
 ---
 
-## 3. Frontend Dependency License Inventory
+## 3. In-Depth PyMuPDF Code Reality vs. Licensing Assessment
 
-| Package | Version | Declared License | Commercial SaaS Permissible? |
-|---|---|---|---|
-| **react** / **react-dom** | `^18.2.0` | MIT | **Yes** |
-| **vite** | `^5.1.6` | MIT | **Yes** |
-| **typescript** | `^5.2.2` | Apache-2.0 | **Yes** |
-| **tailwindcss** | `^3.4.1` | MIT | **Yes** |
-| **@tanstack/react-query** | `^5.28.4` | MIT | **Yes** |
-| **zustand** | `^4.5.2` | MIT | **Yes** |
-| **lucide-react** | `^0.359.0` | ISC | **Yes** |
-| **clsx** | `^2.1.0` | MIT | **Yes** |
-| **tailwind-merge** | `^2.2.2` | MIT | **Yes** |
-| **diff** | `^5.2.0` | BSD-3-Clause | **Yes** |
-| **docx-preview** | `^0.3.2` | MIT | **Yes** |
-| **postcss** / **autoprefixer** | `^8.4.38` / `^10.4.19` | MIT | **Yes** |
+### 3.1 Audited Code Reality
+An exhaustive code inspection confirms that `pymupdf` (MuPDF) is directly imported in four (4) backend modules:
+1. `backend/app/services/pdf_highlight_extractor.py`: Extracts vector drawing rectangles (`drawing['items']`), quads, and bounding boxes for ZeroGPT/Turnitin detector PDF highlights.
+2. `backend/app/services/export_engine.py`: Renders PDF pixmaps for layout overflow validation and thumbnail generation.
+3. `backend/app/services/quarantine_inspector.py`: Verifies PDF page count and structural health.
+4. `backend/app/services/external_report_parser.py`: Parses external similarity report PDFs.
 
-All frontend runtime and build dependencies are licensed under permissive open-source licenses (MIT, ISC, BSD-3-Clause, Apache-2.0). None impose copyleft restrictions.
+### 3.2 Can `pypdf` Replace PyMuPDF?
+**No.** `pypdf` is a pure-Python library designed for basic text extraction and PDF merging. It does **not** provide:
+- Access to native vector drawing commands (`re`, `m`, `l`, `c`) necessary to locate ZeroGPT's yellow highlight rectangles.
+- MuPDF's rendering engine for visual pixmap generation (`get_pixmap()`).
+- High-precision glyph coordinate tracking required for paragraph-to-highlight alignment.
 
----
+Replacing PyMuPDF with `pypdf` would break the external detector highlight extraction and comparison features.
 
-## 4. In-Depth AGPL Analysis: PyMuPDF / MuPDF
+### 3.3 AGPLv3 Implications for Commercial SaaS
+PyMuPDF is dual-licensed by Artifex Software Inc.:
+- **GNU AGPL v3:** Requires that any organization running the software over a network must provide the complete corresponding source code of the network application to all users.
+- **Commercial OEM/SaaS License:** Available for purchase directly from Artifex Software Inc., exempting the licensee from the AGPL copyleft obligations.
 
-### 4.1 The Issue
-`pymupdf` (bindings for Artifex Software's MuPDF) is licensed under the **GNU Affero General Public License v3 (AGPLv3)** with an alternative commercial license offered by Artifex. Under Section 13 of AGPLv3 (Remote Network Interaction), if a program incorporating AGPL code is run as a network service, the full corresponding source code of the program must be made available to all users interacting with it remotely.
+### 3.4 Unresolved Owner Action Item (Pre-Launch Blocker)
+Prior to accepting real commercial payments from paying students, the project owner must select and execute one of two legal paths:
+1. **Purchase an Artifex Commercial License:** Contact Artifex Software Inc. (https://artifex.com/licensing) to obtain a commercial license for MuPDF/PyMuPDF; OR
+2. **Publish Under AGPLv3:** Formally declare and license the entire Writelynx application under GNU AGPLv3, making the complete source code publicly accessible.
 
-### 4.2 Impact Assessment on Writelynx
-- In Writelynx, `pymupdf` is utilized in `backend/app/services/pdf_extractor.py` to extract text from reference sources uploaded by students (e.g. published IEEE/ACM papers for plagiarism and citation cross-referencing).
-- The primary product workflow (editing, structural analysis, AI rewrites, diffing, OOXML reconstruction) operates entirely on **Word `.docx`** files using `python-docx` (MIT) and `lxml` (BSD-3-Clause).
-- However, having `pymupdf` directly imported in the main monolithic FastAPI process could theoretically raise copyleft interpretation concerns regarding the proprietary Writelynx backend code.
-
-### 4.3 Mitigation & Resolution Strategy
-To eliminate 100% of copyleft contamination risk for commercial operation:
-
-1. **Phase 1: Process Isolation (Current Implementation)**
-   - PDF extraction is confined to a standalone utility script executed in a separate sub-process or microservice container with a standard JSON-over-stdout or REST interface. Under copyright law and FSF guidelines, communication across a standard operating system IPC/process boundary with generic data exchange does not combine programs into a single derivative work.
-
-2. **Phase 2: Permissive Drop-In Replacement (Recommended for Production)**
-   - Replace `pymupdf` with **`pypdf`** (BSD-3-Clause) or **`pdfplumber`** (MIT).
-   - In Python:
-     ```python
-     # Drop-in BSD-3-Clause replacement:
-     import pypdf
-     reader = pypdf.PdfReader(stream)
-     text = "\n".join([page.extract_text() or "" for page in reader.pages])
-     ```
-   - Because Writelynx only extracts plain text and token counts from reference PDFs (not vector graphics or layout rendering), `pypdf` provides identical functional capability with zero AGPL licensing risk.
-
----
-
-## 5. Formal Legal Compliance Conclusion
-
-1. **Zero GPL/AGPL in Core Business Logic:** All core SaaS logic—including authentication, billing, entitlement enforcement, quarantine validation, OOXML reconstruction, diff engine, cost governor, and payment handling—uses solely MIT, BSD, or Apache-2.0 libraries.
-2. **Commercial Distribution Clearance:** With the PDF extraction isolated and migrated to BSD-licensed `pypdf`, Writelynx is **100% cleared for commercial SaaS operation** without any obligation to open-source proprietary algorithms, database schemas, or business logic.
+**Status:** UNRESOLVED OWNER ACTION (Commercial Launch Blocker).

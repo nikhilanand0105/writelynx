@@ -1,7 +1,7 @@
 # ==============================================================================
 # WRITELYNX MULTI-STAGE PRODUCTION DOCKERFILE
 # Stage 1: Build production React + TypeScript static assets
-# Stage 2: Production Python 3.11 runtime with LibreOffice, Poppler & Uvicorn
+# Stage 2: Hardened Python 3.11 runtime (non-root, minimal headless LibreOffice)
 # ==============================================================================
 
 FROM node:20-alpine AS frontend-builder
@@ -14,7 +14,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ------------------------------------------------------------------------------
-# Stage 2: Python Backend Runtime
+# Stage 2: Production Python Backend Runtime
 # ------------------------------------------------------------------------------
 FROM python:3.11-slim AS production
 
@@ -24,37 +24,38 @@ ENV PYTHONUNBUFFERED=1 \
     LIBREOFFICE_PATH=/usr/bin/soffice \
     STORAGE_DIR=/app/storage
 
-# Install headless LibreOffice, Poppler utilities, and system dependencies
+# Install headless LibreOffice Writer, Poppler utilities, and curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
-    libreoffice-calc \
-    default-jre-headless \
     poppler-utils \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Security: Create non-root dedicated application user
+RUN groupadd -g 1001 writelynx && \
+    useradd -u 1001 -g writelynx -m -s /bin/bash writelynx
+
 WORKDIR /app
 
-# Install Python requirements
+# Install Python production requirements
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Download required spaCy academic NLP model
-RUN python -m spacy download en_core_web_sm
-
-# Copy backend application and sample documents
+# Copy backend application source only (sample documents strictly excluded)
 COPY backend/ ./backend/
-COPY sample_documents/ ./sample_documents/
 
 # Copy compiled frontend production assets
 COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 
-# Pre-create private storage directories
+# Pre-create private storage directories and assign ownership to non-root user
 RUN mkdir -p /app/storage/documents \
              /app/storage/quarantine \
              /app/storage/sources \
              /app/storage/exports \
-             /app/storage/reports
+             /app/storage/reports && \
+    chown -R writelynx:writelynx /app
+
+USER writelynx
 
 EXPOSE 8000
 

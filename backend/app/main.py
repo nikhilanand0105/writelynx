@@ -21,8 +21,9 @@ from backend.app.api import (
     admin,
 )
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+# Create tables in dev/test mode; migrations manage production
+if settings.ENVIRONMENT != "production":
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -33,13 +34,13 @@ app = FastAPI(
     openapi_url="/api/openapi.json"
 )
 
-# CORS setup for Vite frontend (http://localhost:5173 and 127.0.0.1:5173)
+# CORS setup with strict allowlist
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
 # Register routers

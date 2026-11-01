@@ -1,8 +1,9 @@
 # Writelynx — Academic Writing Integrity, Attribution Auditing & Manuscript Revision Studio
 
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Pytest-128%2F128%20Passed%20(100%25)-success.svg)]()
-[![Security Audit](https://img.shields.io/badge/Security%20Suite-60%2F60%20Verified-blue.svg)]()
+[![Tests](https://img.shields.io/badge/Pytest-137%2F137%20Passed%20(100%25)-success.svg)]()
+[![Acceptance Suite](https://img.shields.io/badge/Acceptance-20%2F20%20Verified-brightgreen.svg)]()
+[![Security Audit](https://img.shields.io/badge/Security%20Suite-69%2F69%20Verified-blue.svg)]()
 [![Target Institution](https://img.shields.io/badge/Institution-Vellore%20Institute%20of%20Technology-blueviolet.svg)]()
 [![Payment Precision](https://img.shields.io/badge/Billing-Integer%20Paise%20(Zero%20Drift)-orange.svg)]()
 [![Privacy](https://img.shields.io/badge/AI%20Policy-Zero%20Data%20Retention-green.svg)]()
@@ -421,7 +422,7 @@ backend/tests/test_v3_features.py ..................                     [ 52%]
 backend/tests/test_writelynx_security_suite.py ......................... [ 72%]
 ...................................                                      [100%]
 
-============================= 128 passed in 33.73s =============================
+============================= 137 passed in 47.99s =============================
 ```
 
 ### Test Suite Coverage Breakdown
@@ -432,13 +433,27 @@ backend/tests/test_writelynx_security_suite.py ......................... [ 72%]
 | `test_ooxml_integrity.py` | 22 | OOXML element paths, MathML `<m:oMath>` formulas, table structures, run-level formatting, and Word Track Changes `<w:ins>` / `<w:del>` generation. |
 | `test_v3_features.py` | 18 | Multi-report detector PDF alignment, concordance computation, 9-step evidence grounding, and heading immutability. |
 | `test_advanced_features.py` | 12 | 12-module writing diagnostics, burstiness metrics, Shannon entropy, and colloquialism detection. |
+| `test_writelynx_security_remediation.py` | 9 | Multi-tenant authorization dependencies, P0.1 upload bypass removal, SSRF cloud metadata block, student settings RBAC, and plan overage deltas. |
 | `test_fact_validator.py` | 4 | QuantLens-XAI numeric invariant protection, Sharpe ratio preservation, and percentage validation. |
 | `test_docx_preservation.py` | 3 | Block hierarchy round-trip parsing, paragraph spacing, and font hierarchy retention. |
 | `test_citation_analyzer.py` | 2 | IEEE `[n]` and APA citation parsing, bibliography mapping, and unanchored attribution checks. |
 | `test_similarity_engine.py` | 2 | RapidFuzz token sort matching, Levenshtein distance, and reference document similarity. |
 | `test_privacy_and_recovery.py` | 3 | 7-day automated TTL file purging, 1-hour abandoned upload sweep, and synchronous student hard delete verification. |
 | `test_revision_manager.py` | 1 | Accept/Reject/Edit revision lifecycle and audit trail tracking. |
-| `test_api_workflow.py` | 1 | End-to-end API integration flow (upload $\rightarrow$ analysis $\rightarrow$ revision $\rightarrow$ export). |
+| `test_api_workflow.py` | 1 | Authenticated end-to-end API integration flow (upload $\rightarrow$ analysis $\rightarrow$ revision $\rightarrow$ export). |
+
+### End-to-End Acceptance Verification (20 Scenarios)
+A standalone 20-step verification script (`backend/tests/verify_acceptance_20_steps.py`) verifies the entire student lifecycle against the running backend server:
+- Steps 1-3: Public endpoint check, personal Gmail rejection (`403 Forbidden`), and valid VIT student login (`@vitstudent.ac.in`).
+- Steps 4-9: Mode & Plan selection, Razorpay order creation, payment signature verification, entitlement minting, and 15-minute single-use reservation generation.
+- Steps 10-15: DOCX quarantine upload, headless LibreOffice page counting, durable background analysis job execution, diagnostics generation, suggestion presentation, Track Changes DOCX export, and revised PDF rendering.
+- Steps 16-20: Real artifact preservation validation, upload token replay prevention (`409 Conflict`), cross-tenant access denial (`403 Forbidden`), anonymous access block (`401 Unauthorized`), and admin kill switch response (`PURCHASES_PAUSED`).
+
+```bash
+# Run acceptance test
+backend/venv/bin/python3 backend/tests/verify_acceptance_20_steps.py
+# Output: ALL 20 PRODUCTION ACCEPTANCE CRITERIA VERIFIED AND PASSED (100%)
+```
 
 ### Frontend Build Verification
 ```bash

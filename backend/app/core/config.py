@@ -8,6 +8,7 @@ STORAGE_DIR = BASE_DIR / "storage"
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Writelynx"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     API_PREFIX: str = "/api"
     DATABASE_URL: str = f"sqlite:///{STORAGE_DIR}/manuscript_studio.db"
     
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     # Auth & OAuth Settings
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "mock-google-client-id")
     TEST_MODE_MOCK_AUTH: bool = os.getenv("TEST_MODE_MOCK_AUTH", "1").lower() in ("1", "true", "yes")
+    COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1", "yes")
     ALLOWED_STUDENT_DOMAIN: str = "vitstudent.ac.in"
     ADMIN_EMAILS: list[str] = [
         e.strip() for e in os.getenv("ADMIN_EMAILS", "admin@vitstudent.ac.in,system@writelynx.internal").split(",") if e.strip()
@@ -88,7 +90,15 @@ class Settings(BaseSettings):
     
     # Telemetry and privacy
     OFFLINE_ONLY: bool = True  # Strict local privacy by default
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8000", "http://127.0.0.1:8000"]
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "https://writelynx.pages.dev",
+        "https://writelynx.in",
+        "https://api.writelynx.in",
+    ]
     MAX_PDF_PAGES: int = 500
     MAX_EVIDENCE_TEXT_CHARS: int = 2_000_000
     
@@ -105,6 +115,24 @@ class Settings(BaseSettings):
                 setattr(self, name, self.STORAGE_DIR / child)
         if "DATABASE_URL" not in self.model_fields_set:
             self.DATABASE_URL = f"sqlite:///{self.STORAGE_DIR}/manuscript_studio.db"
+
+        # Production safety validations
+        if self.ENVIRONMENT == "production":
+            if self.TEST_MODE_MOCK_AUTH:
+                raise ValueError("SECURITY BLOCKER: TEST_MODE_MOCK_AUTH must be disabled in production.")
+            if not self.GOOGLE_CLIENT_ID or self.GOOGLE_CLIENT_ID == "mock-google-client-id":
+                raise ValueError("SECURITY BLOCKER: Real GOOGLE_CLIENT_ID is required in production.")
+            if not self.RAZORPAY_KEY_SECRET or self.RAZORPAY_KEY_SECRET == "mock_razorpay_secret":
+                raise ValueError("SECURITY BLOCKER: Production RAZORPAY_KEY_SECRET must be configured.")
+
+        # Add custom origins if provided via environment
+        env_origins = os.getenv("ALLOWED_ORIGINS", "")
+        if env_origins:
+            for origin in env_origins.split(","):
+                clean = origin.strip()
+                if clean and clean not in self.ALLOWED_ORIGINS:
+                    self.ALLOWED_ORIGINS.append(clean)
+
         return self
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

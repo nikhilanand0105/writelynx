@@ -81,19 +81,25 @@ async def authorized_upload(
             detail="Only Microsoft Word (.docx) files are supported."
         )
 
-    # 2. Stage to Quarantine Directory
+    # 2. Stage to Quarantine Directory with bounded streaming
     quarantine_filename = f"{reservation.id}_{sanitize_filename(file.filename)}"
     quarantine_path = settings.QUARANTINE_DIR / quarantine_filename
 
-    content = await file.read()
-    if len(content) > reservation.max_file_size_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Uploaded file exceeds your plan limit of {reservation.max_file_size_bytes / (1024*1024):.1f} MB."
+    from backend.app.core.security import save_upload
+    try:
+        await save_upload(
+            file=file,
+            path=quarantine_path,
+            allowed_extensions={".docx"},
+            max_size_bytes=reservation.max_file_size_bytes
         )
-
-    with open(quarantine_path, "wb") as f:
-        f.write(content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to stream quarantined upload: {str(e)}"
+        )
 
     # 3. Comprehensive Quarantine Inspection (Malware, Macros, Zip Bomb, XXE)
     try:
@@ -118,6 +124,26 @@ async def authorized_upload(
     is_over_pages = page_count > entitlement.max_pages
 
     if is_over_characters or is_over_pages:
+        # Check if exceeds all available tiers (Priority 3.3)
+        if (
+            char_count > settings.PLAN_CONFIGS["extended"]["max_characters"]
+            or page_count > settings.PLAN_CONFIGS["extended"]["max_pages"]
+        ):
+            response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+            return {
+                "status": "UNSUPPORTED_OVER_LIMIT",
+                "message": "Manuscript exceeds the maximum 50-page / 160,000-character capacity of all Writelynx plans. Please split your document into chapters. Your entitlement is preserved.",
+                "entitlement_id": entitlement.id,
+                "current_tier": entitlement.plan_tier,
+                "actual_pages": page_count,
+                "max_pages": 50,
+                "actual_characters": char_count,
+                "max_characters": 160000,
+                "recommended_tier": None,
+                "upgrade_difference_paise": 0,
+                "upgrade_difference_rupees": 0,
+            }
+
         # Determine appropriate upgraded plan
         recommended_tier = "standard"
         if (

@@ -2,10 +2,12 @@ import datetime
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from typing import Dict, Any, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+
 from backend.app.core.config import settings
 from backend.app.models.models import (
     User,
@@ -14,6 +16,20 @@ from backend.app.models.models import (
     PaymentWebhookEvent,
     SystemSetting,
 )
+
+logger = logging.getLogger("writelynx.payments")
+
+
+def get_razorpay_client():
+    """Retrieve initialized Razorpay client if configured."""
+    if settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET and settings.RAZORPAY_KEY_SECRET != "mock_razorpay_secret":
+        try:
+            import razorpay
+            return razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        except Exception as e:
+            logger.warning(f"Could not initialize Razorpay client: {e}")
+            return None
+    return None
 
 
 class PaymentService:
@@ -44,7 +60,7 @@ class PaymentService:
         plan_tier: str,
         operating_mode: str = "academic_revision",
     ) -> Dict[str, Any]:
-        """Create a Razorpay order in integer paise."""
+        """Create an authoritative payment order in integer paise."""
         if not cls.check_purchase_allowed(db):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -60,7 +76,34 @@ class PaymentService:
         plan = cls.get_plan_config(plan_tier)
         amount_paise = plan["price_paise"]
         receipt_id = f"rcpt_{user.registration_number or user.id[:8]}_{int(datetime.datetime.utcnow().timestamp())}"
-        order_id = f"order_{secrets.token_hex(10)}"
+
+        client = get_razorpay_client()
+        order_id = None
+        if client:
+            try:
+                rzp_order = client.order.create({
+                    "amount": amount_paise,
+                    "currency": "INR",
+                    "receipt": receipt_id,
+                    "payment_capture": 1,
+                    "notes": {
+                        "user_id": user.id,
+                        "email": user.email,
+                        "plan_tier": plan_tier.lower(),
+                        "operating_mode": operating_mode,
+                    }
+                })
+                order_id = rzp_order["id"]
+            except Exception as e:
+                logger.error(f"Razorpay order creation failed: {e}")
+                if settings.ENVIRONMENT == "production":
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Payment gateway communication error. Please try again."
+                    )
+
+        if not order_id:
+            order_id = f"order_{secrets.token_hex(10)}"
 
         # Create record in DB
         purchase = Purchase(
@@ -105,6 +148,18 @@ class PaymentService:
         # In offline mock mode with test keys, accept deterministic mock signatures
         if settings.TEST_MODE_MOCK_AUTH and signature.startswith("mock_sig_"):
             return signature == f"mock_sig_{order_id}_{payment_id}"
+
+        client = get_razorpay_client()
+        if client:
+            try:
+                client.utility.verify_payment_signature({
+                    "razorpay_order_id": order_id,
+                    "razorpay_payment_id": payment_id,
+                    "razorpay_signature": signature
+                })
+                return True
+            except Exception:
+                return False
 
         message = f"{order_id}|{payment_id}".encode("utf-8")
         secret = settings.RAZORPAY_KEY_SECRET.encode("utf-8")
@@ -151,6 +206,35 @@ class PaymentService:
                 "operating_mode": purchase.operating_mode,
             }
 
+        # If live client configured, independently verify payment status, amount, and currency with gateway
+        client = get_razorpay_client()
+        if client and not signature.startswith("mock_sig_"):
+            try:
+                pay_data = client.payment.fetch(payment_id)
+                if pay_data.get("status") not in ("captured", "authorized"):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Payment has not been captured by the gateway."
+                    )
+                if pay_data.get("amount") != purchase.amount_paise:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Mismatched payment amount reported by gateway."
+                    )
+                if pay_data.get("currency") != "INR":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Payment currency must be INR."
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Gateway payment fetch failed: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to independently verify payment status with gateway: {str(e)}"
+                )
+
         # Update purchase record
         purchase.razorpay_payment_id = payment_id
         purchase.razorpay_signature = signature
@@ -191,11 +275,10 @@ class PaymentService:
         current_tier: str,
         target_tier: str,
     ) -> int:
-        """Calculate exact difference in integer paise between tiers."""
-        curr_plan = cls.get_plan_config(current_tier)
-        target_plan = cls.get_plan_config(target_tier)
-
-        diff = target_plan["price_paise"] - curr_plan["price_paise"]
+        """Calculate price delta in paise for an upgrade."""
+        c_plan = cls.get_plan_config(current_tier)
+        t_plan = cls.get_plan_config(target_tier)
+        diff = t_plan["price_paise"] - c_plan["price_paise"]
         if diff <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -211,7 +294,7 @@ class PaymentService:
         entitlement_id: str,
         target_tier: str,
     ) -> Dict[str, Any]:
-        """Create an order for the exact price difference between tiers."""
+        """Create an order for the exact price difference between tiers, strictly bound to the entitlement."""
         entitlement = db.query(Entitlement).filter(
             Entitlement.id == entitlement_id,
             Entitlement.user_id == user.id,
@@ -230,9 +313,33 @@ class PaymentService:
             )
 
         diff_paise = cls.calculate_upgrade_difference(entitlement.plan_tier, target_tier)
-        order_id = f"order_upg_{secrets.token_hex(10)}"
+        client = get_razorpay_client()
+        order_id = None
+        receipt_id = f"upg_{entitlement.id[:8]}_{int(datetime.datetime.utcnow().timestamp())}"
 
-        # Save upgrade purchase record
+        if client:
+            try:
+                rzp_order = client.order.create({
+                    "amount": diff_paise,
+                    "currency": "INR",
+                    "receipt": receipt_id,
+                    "payment_capture": 1,
+                    "notes": {
+                        "user_id": user.id,
+                        "entitlement_id": entitlement.id,
+                        "source_tier": entitlement.plan_tier,
+                        "target_tier": target_tier.lower(),
+                        "is_upgrade": True,
+                    }
+                })
+                order_id = rzp_order["id"]
+            except Exception as e:
+                logger.error(f"Razorpay upgrade order creation failed: {e}")
+
+        if not order_id:
+            order_id = f"order_upg_{secrets.token_hex(10)}"
+
+        # Save upgrade purchase record with strict binding to original purchase and entitlement
         purchase = Purchase(
             id=f"pur_upg_{secrets.token_hex(12)}",
             user_id=user.id,
@@ -242,6 +349,8 @@ class PaymentService:
             currency="INR",
             razorpay_order_id=order_id,
             status="PENDING",
+            is_upgrade=True,
+            parent_purchase_id=entitlement.purchase_id,
         )
         db.add(purchase)
         db.commit()
@@ -271,7 +380,7 @@ class PaymentService:
         payment_id: str,
         signature: str,
     ) -> Dict[str, Any]:
-        """Fulfill upgrade after payment verification."""
+        """Fulfill upgrade after payment verification with strict binding checks (P2.5)."""
         is_valid = cls.verify_signature(order_id, payment_id, signature)
         if not is_valid:
             raise HTTPException(
@@ -287,7 +396,7 @@ class PaymentService:
         if not entitlement:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Entitlement not found."
+                detail="Target entitlement not found."
             )
 
         purchase = db.query(Purchase).filter(
@@ -295,10 +404,41 @@ class PaymentService:
             Purchase.user_id == user.id,
         ).first()
 
-        if purchase:
-            purchase.razorpay_payment_id = payment_id
-            purchase.razorpay_signature = signature
-            purchase.status = "COMPLETED"
+        if not purchase:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Upgrade purchase order not found or does not belong to student."
+            )
+
+        # Priority 2.5: Validate that the purchase is strictly bound to this entitlement and target tier
+        if not purchase.is_upgrade:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Transaction was not registered as a tier upgrade purchase."
+            )
+
+        if purchase.parent_purchase_id != entitlement.purchase_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upgrade payment is not bound to this entitlement."
+            )
+
+        if purchase.plan_tier != target_tier.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Upgrade payment was minted for tier '{purchase.plan_tier}', not '{target_tier}'."
+            )
+
+        expected_diff = cls.calculate_upgrade_difference(entitlement.plan_tier, target_tier)
+        if purchase.amount_paise != expected_diff:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upgrade payment amount does not match required tier difference."
+            )
+
+        purchase.razorpay_payment_id = payment_id
+        purchase.razorpay_signature = signature
+        purchase.status = "COMPLETED"
 
         target_plan = cls.get_plan_config(target_tier)
         entitlement.plan_tier = target_tier.lower()
@@ -327,7 +467,6 @@ class PaymentService:
         signature: str,
     ) -> Dict[str, Any]:
         """Idempotent webhook handler with HMAC verification and duplicate rejection."""
-        # 1. Verify webhook signature
         if not signature:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing webhook signature.")
 
@@ -339,7 +478,6 @@ class PaymentService:
             if not hmac.compare_digest(expected_sig, signature):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature.")
 
-        # 2. Parse payload
         try:
             event_data = json.loads(raw_payload.decode("utf-8"))
         except Exception:
@@ -348,12 +486,10 @@ class PaymentService:
         event_id = event_data.get("event_id") or event_data.get("id") or f"evt_{secrets.token_hex(8)}"
         event_type = event_data.get("event", "unknown")
 
-        # 3. Check duplicate event (Idempotency)
         existing_event = db.query(PaymentWebhookEvent).filter(PaymentWebhookEvent.event_id == event_id).first()
         if existing_event:
             return {"status": "already_processed", "event_id": event_id}
 
-        # Record webhook event
         webhook_rec = PaymentWebhookEvent(
             id=f"whe_{secrets.token_hex(12)}",
             event_id=event_id,
@@ -364,19 +500,29 @@ class PaymentService:
         db.add(webhook_rec)
         db.commit()
 
-        # 4. Process event
         if event_type in ("payment.captured", "order.paid"):
-            payload_entity = event_data.get("payload", {}).get("payment", {}).get("entity", {})
-            order_id = payload_entity.get("order_id")
-            payment_id = payload_entity.get("id")
+            payload_payment = event_data.get("payload", {}).get("payment", {}).get("entity", {})
+            payload_order = event_data.get("payload", {}).get("order", {}).get("entity", {})
+
+            order_id = payload_payment.get("order_id") or payload_order.get("id")
+            payment_id = payload_payment.get("id")
+            amount = payload_payment.get("amount") or payload_order.get("amount_paid") or payload_order.get("amount")
+            currency = payload_payment.get("currency") or payload_order.get("currency")
 
             if order_id:
                 purchase = db.query(Purchase).filter(Purchase.razorpay_order_id == order_id).first()
                 if purchase and purchase.status != "COMPLETED":
+                    # Verify amount and currency if provided
+                    if amount and amount != purchase.amount_paise:
+                        logger.error(f"Webhook amount mismatch for order {order_id}: expected {purchase.amount_paise}, got {amount}")
+                        return {"status": "amount_mismatch", "event_id": event_id}
+                    if currency and currency != "INR":
+                        logger.error(f"Webhook currency mismatch for order {order_id}: expected INR, got {currency}")
+                        return {"status": "currency_mismatch", "event_id": event_id}
+
                     purchase.razorpay_payment_id = payment_id
                     purchase.status = "COMPLETED"
 
-                    # Ensure entitlement is issued if not already
                     existing_ent = db.query(Entitlement).filter(Entitlement.purchase_id == purchase.id).first()
                     if not existing_ent:
                         plan = cls.get_plan_config(purchase.plan_tier)

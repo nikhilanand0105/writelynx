@@ -48,7 +48,13 @@ def verify_google_oauth_token(id_token_str: str) -> dict:
         )
 
     # 1. Mock Authentication Mode for automated testing & CI/CD
-    if settings.TEST_MODE_MOCK_AUTH and (id_token_str.startswith("mock-") or id_token_str.startswith("test-")):
+    if id_token_str.startswith("mock-") or id_token_str.startswith("test-"):
+        if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_AUTH:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Mock authentication is strictly disabled in production/staging environments."
+            )
+
         parts = id_token_str.split(":")
         # Format can be mock-token:<email> or mock-token:<reg_no>:<email>
         if len(parts) >= 3:
@@ -86,6 +92,13 @@ def verify_google_oauth_token(id_token_str: str) -> dict:
             request_adapter,
             settings.GOOGLE_CLIENT_ID
         )
+
+        # Require verified email
+        if not id_info.get("email_verified", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Google account email is not verified."
+            )
 
         email = id_info.get("email", "").lower().strip()
         hd = id_info.get("hd", "").lower().strip()

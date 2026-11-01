@@ -8,20 +8,28 @@ client = TestClient(app)
 SAMPLE_DOC = Path("sample_documents/academic_research_report.docx")
 SAMPLE_SOURCE = Path("sample_documents/chen_zhao_reference_paper.docx")
 
+
 def test_full_api_workflow():
     assert SAMPLE_DOC.exists()
     assert SAMPLE_SOURCE.exists()
 
-    # 1. Health check
+    # 1. Health check (public)
     res_health = client.get("/api/health")
     assert res_health.status_code == 200
     assert res_health.json()["status"] == "healthy"
+
+    # Authenticate student
+    login_res = client.post("/api/auth/google-login", json={"id_token": "mock-21bce1001@vitstudent.ac.in"})
+    assert login_res.status_code == 200
+    token = login_res.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
 
     # 2. Upload Document
     with open(SAMPLE_DOC, "rb") as f:
         res_upload = client.post(
             "/api/documents/upload",
-            files={"file": ("academic_research_report.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+            files={"file": ("academic_research_report.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+            headers=headers
         )
     assert res_upload.status_code == 200
     doc_data = res_upload.json()
@@ -30,7 +38,7 @@ def test_full_api_workflow():
     assert doc_data["table_count"] == 1
 
     # 3. Get Document Structure
-    res_struct = client.get(f"/api/documents/{doc_id}/structure")
+    res_struct = client.get(f"/api/documents/{doc_id}/structure", headers=headers)
     assert res_struct.status_code == 200
     struct_data = res_struct.json()
     assert len(struct_data["blocks"]) > 5
@@ -41,7 +49,8 @@ def test_full_api_workflow():
         res_source = client.post(
             f"/api/documents/{doc_id}/sources",
             files={"file": ("chen_zhao_reference_paper.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
-            data={"is_external_report": False}
+            data={"is_external_report": False},
+            headers=headers
         )
     assert res_source.status_code == 200
     source_data = res_source.json()
@@ -50,25 +59,26 @@ def test_full_api_workflow():
     # 5. Run Analysis
     res_analyze = client.post(
         f"/api/documents/{doc_id}/analyze",
-        json={"editing_mode": "clarity"}
+        json={"editing_mode": "clarity"},
+        headers=headers
     )
     assert res_analyze.status_code == 200
     analyze_json = res_analyze.json()
     assert "job_id" in analyze_json
 
     # Check Analysis Status and Job progress
-    res_status = client.get(f"/api/documents/{doc_id}/analysis/status")
+    res_status = client.get(f"/api/documents/{doc_id}/analysis/status", headers=headers)
     assert res_status.status_code == 200
     status_json = res_status.json()
     assert "job" in status_json
 
     # Test Job Cancellation Endpoint
-    res_cancel = client.post(f"/api/jobs/{analyze_json['job_id']}/cancel")
+    res_cancel = client.post(f"/api/jobs/{analyze_json['job_id']}/cancel", headers=headers)
     assert res_cancel.status_code == 200
     assert res_cancel.json()["cancel_requested"] is True
 
     # Retrieve analysis results
-    res_analysis = client.get(f"/api/documents/{doc_id}/analysis")
+    res_analysis = client.get(f"/api/documents/{doc_id}/analysis", headers=headers)
     assert res_analysis.status_code == 200
     analysis_data = res_analysis.json()
     metrics = analysis_data["metrics"]
@@ -80,57 +90,58 @@ def test_full_api_workflow():
         finding_id = analysis_data["findings"][0]["id"]
         res_rev_find = client.post(
             f"/api/findings/{finding_id}/review",
-            json={"review_status": "user_reviewed", "user_notes": "Reviewed in test."}
+            json={"review_status": "user_reviewed", "user_notes": "Reviewed in test."},
+            headers=headers
         )
         assert res_rev_find.status_code == 200
         assert res_rev_find.json()["review_status"] == "user_reviewed"
 
     # Test Detector Reports Endpoint
-    res_reps = client.get(f"/api/documents/{doc_id}/detector-reports")
+    res_reps = client.get(f"/api/documents/{doc_id}/detector-reports", headers=headers)
     assert res_reps.status_code == 200
     assert isinstance(res_reps.json(), list)
 
     # 6. Retrieve Suggestions
-    res_sug = client.get(f"/api/documents/{doc_id}/suggestions")
+    res_sug = client.get(f"/api/documents/{doc_id}/suggestions", headers=headers)
     assert res_sug.status_code == 200
     sug_list = res_sug.json()
     assert len(sug_list) > 0
 
     first_sug = sug_list[0]
     # Accept the suggestion
-    res_accept = client.post(f"/api/suggestions/{first_sug['id']}/accept")
+    res_accept = client.post(f"/api/suggestions/{first_sug['id']}/accept", headers=headers)
     assert res_accept.status_code == 200
     assert res_accept.json()["success"] is True
 
     # 7. Check Revision Log
-    res_revs = client.get(f"/api/documents/{doc_id}/revisions")
+    res_revs = client.get(f"/api/documents/{doc_id}/revisions", headers=headers)
     assert res_revs.status_code == 200
     assert len(res_revs.json()) >= 1
 
     # 8. Run Validation
-    res_val = client.post(f"/api/documents/{doc_id}/validate")
+    res_val = client.post(f"/api/documents/{doc_id}/validate", headers=headers)
     assert res_val.status_code == 200
     val_report = res_val.json()
     assert val_report["archive_valid"] is True
     assert val_report["reopened_successfully"] is True
 
     # 9. Export Revised DOCX
-    res_exp_docx = client.post(f"/api/documents/{doc_id}/export/docx")
+    res_exp_docx = client.post(f"/api/documents/{doc_id}/export/docx", headers=headers)
     assert res_exp_docx.status_code == 200
     export_docx_data = res_exp_docx.json()
     assert "download_url" in export_docx_data
 
     # Download exported DOCX
-    res_dl = client.get(export_docx_data["download_url"])
+    res_dl = client.get(export_docx_data["download_url"], headers=headers)
     assert res_dl.status_code == 200
     assert len(res_dl.content) > 1000
 
     # 10. Export Revised PDF
-    res_exp_pdf = client.post(f"/api/documents/{doc_id}/export/pdf")
+    res_exp_pdf = client.post(f"/api/documents/{doc_id}/export/pdf", headers=headers)
     assert res_exp_pdf.status_code == 200
     export_pdf_data = res_exp_pdf.json()
     assert "download_url" in export_pdf_data
 
-    res_dl_pdf = client.get(export_pdf_data["download_url"])
+    res_dl_pdf = client.get(export_pdf_data["download_url"], headers=headers)
     assert res_dl_pdf.status_code == 200
     assert len(res_dl_pdf.content) > 1000

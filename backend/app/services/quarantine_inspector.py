@@ -1,20 +1,78 @@
 import math
+import os
 import re
+import shutil
 import stat
+import subprocess
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException, status
 from lxml import etree
 import docx
+from backend.app.core.config import settings
 
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS_MAP = {"w": WORD_NAMESPACE}
 
+# Cache for rendered PDF page counts: {file_hash: (page_count, is_authoritative)}
+_PAGE_COUNT_CACHE: Dict[str, Tuple[int, bool]] = {}
+
 
 class QuarantineInspector:
     @staticmethod
+    def count_actual_rendered_pages(file_path: Path, file_hash: str) -> Tuple[int, bool]:
+        """
+        Renders DOCX to PDF using headless LibreOffice in an isolated sandbox,
+        and authoritatively counts the exact PDF pages.
+        Caches by document SHA-256 hash.
+        """
+        if file_hash in _PAGE_COUNT_CACHE:
+            return _PAGE_COUNT_CACHE[file_hash]
+
+        soffice = shutil.which(settings.LIBREOFFICE_PATH) or shutil.which("libreoffice") or shutil.which("soffice")
+        if not soffice and os.path.exists(settings.LIBREOFFICE_PATH):
+            soffice = settings.LIBREOFFICE_PATH
+
+        if not soffice:
+            return 0, False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            profile_dir = temp_path / "lo_profile"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = temp_path / "out"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            cmd = [
+                soffice,
+                f"-env:UserInstallation={profile_dir.as_uri()}",
+                "--headless",
+                "--norestore",
+                "--nodefault",
+                "--nofirststartwizard",
+                "--convert-to", "pdf",
+                "--outdir", str(out_dir),
+                str(file_path)
+            ]
+
+            try:
+                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+                converted_pdfs = list(out_dir.glob("*.pdf"))
+                if converted_pdfs:
+                    import pymupdf
+                    with pymupdf.open(str(converted_pdfs[0])) as pdf:
+                        page_count = len(pdf)
+                        _PAGE_COUNT_CACHE[file_hash] = (page_count, True)
+                        return page_count, True
+            except Exception:
+                pass
+
+        return 0, False
+    @classmethod
     def inspect_file(
+        cls,
         file_path: Path,
         max_file_size_bytes: int,
         max_ratio: float = 100.0,
@@ -151,19 +209,28 @@ class QuarantineInspector:
                 breaks = root.xpath("//w:br[@w:type='page'] | //w:lastRenderedPageBreak", namespaces=NS_MAP)
                 explicit_breaks = len(breaks)
 
-            # Estimate page count conservatively
-            # Standard academic manuscript page ~ 400-500 words or ~ 2500-3000 chars
-            derived_pages = max(
-                1,
-                explicit_breaks + 1,
-                math.ceil(character_count / 3000),
-                math.ceil(word_count / 450)
-            )
+            # Try authoritative rendered page count via headless LibreOffice
+            from backend.app.core.security import calculate_file_hash
+            file_hash = calculate_file_hash(file_path)
+            rendered_pages, is_authoritative = cls.count_actual_rendered_pages(file_path, file_hash)
+
+            if is_authoritative and rendered_pages > 0:
+                final_page_count = rendered_pages
+            else:
+                # Conservative fallback
+                final_page_count = max(
+                    1,
+                    explicit_breaks + 1,
+                    math.ceil(character_count / 3000),
+                    math.ceil(word_count / 450)
+                )
 
             return {
                 "character_count": character_count,
                 "word_count": word_count,
-                "page_count": derived_pages,
+                "page_count": final_page_count,
+                "is_authoritative_page_count": is_authoritative,
+                "rendered_page_count": rendered_pages,
                 "paragraph_count": len(doc.paragraphs),
                 "table_count": len(doc.tables),
                 "image_count": len(doc.inline_shapes),
