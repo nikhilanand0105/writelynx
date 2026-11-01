@@ -11,6 +11,7 @@ from backend.app.core.auth import get_optional_user
 from backend.app.models.models import Document, DocumentBlock, User
 from backend.app.schemas.schemas import DocumentResponse, DocumentStructureResponse, DocumentBlockResponse
 from backend.app.services.docx_parser import DocxParser
+from backend.app.services.retention_service import RetentionService
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -149,13 +150,8 @@ def delete_document(
         if not user or (doc.user_id != user.id and not user.is_admin):
             raise HTTPException(status_code=403, detail="Unauthorized access to student manuscript.")
 
-    # Remove file on disk if exists
-    try:
-        p = Path(doc.file_path)
-        if p.exists():
-            p.unlink()
-    except Exception:
-        pass
+    # Remove files on disk synchronously (DOCX, exports, sources, detector PDF)
+    RetentionService.hard_delete_document_files(doc, db)
 
     db.delete(doc)
     db.commit()

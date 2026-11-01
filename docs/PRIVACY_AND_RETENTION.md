@@ -13,7 +13,7 @@ Writelynx is built on a fundamental security principle: **student academic manus
 Unlike generic consumer editing tools or unvetted freemium "humanizers" that harvest user text to train LLMs or build reference databases:
 1. **Zero AI Training Guarantee:** No student manuscript, excerpt, citation, revision, or feedback data is ever submitted to, stored by, or used to fine-tune or train any foundational or proprietary AI model.
 2. **Student Intellectual Property Ownership:** Students retain 100% exclusive copyright and moral rights over their submitted text, research data, and generated revisions. Writelynx acts purely as an ephemeral computational processor.
-3. **Automated Ephemeral Retention (TTL Purging):** Raw uploaded files, extracted paragraph chunks, and intermediate AST structures are automatically purged after 48 hours. Students can execute immediate hard deletion at any time.
+3. **Automated Ephemeral Retention (7-Day TTL Purging):** Raw uploaded files, extracted paragraph chunks, intermediate structures, and generated outputs are automatically purged after **7 days**. Students can execute immediate synchronous hard deletion at any time.
 4. **Deny-by-Default Multi-Tenancy:** Storage paths, database records, and memory structures are strictly partitioned by VIT Student User ID (`user_id`). No cross-tenant visibility is physically possible.
 
 ---
@@ -33,34 +33,36 @@ When an AI model is invoked for sentence-level revision or academic tone polishi
 [ Upload Attempt ]
        │
        ▼
-1. /storage/quarantine/   ──(Security/Overage Failure)──► Immediate Secure Unlink
+1. /storage/quarantine/   ──(Security/Overage Failure / 2-Hr TTL)──► Immediate Secure Unlink
        │
        ▼ (Passes Inspection & Validation)
 2. /storage/documents/{doc_id}/ 
        │
        ├─► Authoritative OOXML Parser & Diff Engine
        ├─► Analysis findings & sentence hashes
+       ├─► DOCX Track Changes & PDF Exports
        │
-       ▼ (User Downloads Final Package or 48 Hours Elapsed)
+       ▼ (User Downloads Final Package or 7 Days Elapsed)
 3. Scheduled TTL Purge ────► Hard File Unlink & SQLite Scrubbing
 ```
 
 ### 3.1 Stage 1: Quarantine Isolation (`/storage/quarantine/`)
 - When a document is uploaded via `POST /api/upload-gate/upload-doc`, it is streamed directly into an isolated quarantine staging directory.
 - The file is checked for magic bytes (`PK\x03\x04`), macros (`.docm`, `vbaProject.bin`), zip bomb decompression ratios (> 100:1 or > 100MB), zip-slip path traversal, and raw XML entity injection (`<!DOCTYPE`, `<!ENTITY`).
-- **Failure Action:** If the file fails any inspection check or if the word/page count exceeds the student's purchased plan limits without an upgrade, the quarantined file is **immediately deleted from disk** (`os.unlink()`). No orphaned files linger in quarantine.
+- **Failure Action:** If the file fails any inspection check or if the word/page count exceeds the student's purchased plan limits without an upgrade, the quarantined file is **immediately deleted from disk** (`os.unlink()`). Orphaned scratch files older than 2 hours are swept by `RetentionService.purge_failed_quarantine_files()`.
 
 ### 3.2 Stage 2: Promoted Active Storage (`/storage/documents/`)
 - Conforming documents are moved atomically via filesystem rename to `/storage/documents/{doc_id}_{filename}`.
 - All file permissions are set to `0600` (readable/writable only by the isolated `writelynx` system user).
 - Extracted text chunks, structure metadata, and sentence hashes are indexed in the local SQLite database (`manuscript_studio.db`), bound to the student's `user_id`.
 
-### 3.3 Stage 3: Automated TTL Deletion Engine
-- **Retention Lifetime:** Active documents, paragraph caches, and generated revision artifacts have a maximum Time-To-Live (TTL) of **48 hours**.
-- **Automated Background Reaper:** A periodic background task (`reap_expired_documents()`) scans for documents where `created_at < NOW() - 48 hours`.
-  - Disk artifacts are securely overwritten and unlinked.
+### 3.3 Stage 3: Automated TTL Deletion Engine (`RetentionService`)
+- **Completed Output Retention (7 Days):** Active manuscripts, paragraph caches, and generated exports have a maximum Time-To-Live (TTL) of **7 days** (`DOCUMENT_RETENTION_DAYS=7`).
+- **Abandoned Upload Retention (1 Hour):** Unused upload reservation tokens older than 1 hour are automatically expired and unlinked (`RetentionService.purge_abandoned_upload_reservations()`).
+- **Automated Background Reaper:** The background worker (`durable_worker.py`) periodically runs `RetentionService.run_all_purges()` to scrub expired records and disk files.
+  - Disk artifacts (DOCX, exports, sources, detector PDFs) are securely unlinked.
   - Database records in `documents`, `revisions`, `findings`, and `reference_sources` are cascaded and deleted.
-- **User-Initiated Immediate Purge:** Students can click "Delete Document" in the UI (`DELETE /api/documents/{id}`), triggering synchronous disk unlinking and database row deletion across all dependent tables.
+- **User-Initiated Immediate Purge:** Students can click "Delete Document" in the UI (`DELETE /api/documents/{id}`), triggering synchronous disk unlinking across all primary files, exports, sources, and detector PDFs, followed by database row deletion across all dependent tables.
 
 ---
 

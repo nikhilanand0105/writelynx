@@ -83,7 +83,7 @@ dist/assets/index-B9xK4m.js     312.45 kB │ gzip: 98.60 kB
 - [x] Storage directories (`quarantine/`, `documents/`) created with restrictive filesystem permissions (`0700`/`0600`).
 - [x] Caddy reverse proxy configured with TLS 1.3, HSTS, and strict security headers.
 - [x] Zero-data-retention headers enabled for upstream LLM gateway calls.
-- [x] Ephemeral TTL retention cleanup scheduled for 48-hour document purge.
+- [x] Ephemeral TTL retention cleanup scheduled for 7-day document purge and 1-hour abandoned upload purge.
 
 ---
 

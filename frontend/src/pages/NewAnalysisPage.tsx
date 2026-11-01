@@ -20,14 +20,50 @@ export const NewAnalysisPage: React.FC = () => {
   const [detectorFile, setDetectorFile] = useState<File | null>(null);
   const [isExternalReport, setIsExternalReport] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string>('standard');
+  const [editingMode, setEditingMode] = useState<string>('academic_revision');
   const [entitlements, setEntitlements] = useState<any[]>([]);
   const [overageInfo, setOverageInfo] = useState<any | null>(null);
+  const [clientEstimate, setClientEstimate] = useState<any | null>(null);
+  const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string>('');
 
   React.useEffect(() => {
     api.getMyEntitlements()
       .then((items) => setEntitlements(items))
       .catch(() => {});
   }, []);
+
+  const runClientEstimate = async (file: File) => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const decoder = new TextDecoder('utf-8', { fatal: false });
+      const text = decoder.decode(buffer);
+      const matches = text.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g);
+      let chars = 0;
+      let words = 0;
+      if (matches && matches.length > 0) {
+        for (const m of matches) {
+          const clean = m.replace(/<[^>]+>/g, '');
+          chars += clean.length;
+          words += clean.trim().split(/\s+/).filter(Boolean).length;
+        }
+      } else {
+        chars = Math.round(file.size * 0.4);
+        words = Math.round(chars / 6);
+      }
+      const estPages = Math.max(1, Math.ceil(chars / 2500));
+      const recTier = chars > 65000 ? 'extended' : chars > 15000 ? 'standard' : 'basic';
+      setClientEstimate({
+        sizeMB: (file.size / (1024 * 1024)).toFixed(2),
+        estimatedChars: chars,
+        estimatedWords: words,
+        estimatedPages: estPages,
+        recommendedTier: recTier,
+      });
+      setSelectedPlan(recTier);
+    } catch {
+      setClientEstimate(null);
+    }
+  };
 
   const handlePurchaseSlot = async (tier: string) => {
     try {
@@ -45,7 +81,7 @@ export const NewAnalysisPage: React.FC = () => {
       setEntitlements(updated);
       setIsUploading(false);
       setUploadProgress('');
-      alert(`Success! Purchased 1 ${tier.toUpperCase()} analysis slot.`);
+      setPaymentSuccessMsg('Payment verified. You can now upload your document.');
     } catch (err: any) {
       setIsUploading(false);
       setErrorMsg(err.message || 'Payment initiation failed.');
@@ -88,6 +124,7 @@ export const NewAnalysisPage: React.FC = () => {
       if (file.name.toLowerCase().endsWith('.docx')) {
         setDocFile(file);
         setErrorMsg('');
+        runClientEstimate(file);
       } else {
         setErrorMsg('Primary manuscript must be a Microsoft Word (.docx) document.');
       }
@@ -180,6 +217,41 @@ export const NewAnalysisPage: React.FC = () => {
         <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center gap-3">
           <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
           <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {paymentSuccessMsg && (
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
+            <span className="font-medium">{paymentSuccessMsg}</span>
+          </div>
+          <button onClick={() => setPaymentSuccessMsg('')} className="text-emerald-600 hover:text-emerald-800 text-xs font-semibold">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {clientEstimate && (
+        <div className="p-4 rounded-xl bg-slate-50 border border-indigo-200 text-slate-800 text-xs space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-indigo-900 flex items-center gap-1.5">
+              <FileCheck className="w-4 h-4 text-indigo-600" />
+              Client Pre-Upload Inspection (Non-Authoritative Estimate)
+            </span>
+            <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+              Recommended Plan: {clientEstimate.recommendedTier.toUpperCase()}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-600 pt-1">
+            <div>• File Size: <strong>{clientEstimate.sizeMB} MB</strong></div>
+            <div>• Approx. Words: <strong>{clientEstimate.estimatedWords.toLocaleString()}</strong></div>
+            <div>• Approx. Chars: <strong>{clientEstimate.estimatedChars.toLocaleString()}</strong></div>
+            <div>• Approx. Pages: <strong>~{clientEstimate.estimatedPages}</strong></div>
+          </div>
+          <p className="text-[11px] text-slate-600 italic">
+            *Client estimation runs locally in your browser with 0 bytes uploaded. Server-side validation upon upload remains authoritative.
+          </p>
         </div>
       )}
 
@@ -319,7 +391,13 @@ export const NewAnalysisPage: React.FC = () => {
                   type="file"
                   accept=".docx"
                   className="hidden"
-                  onChange={(e) => e.target.files && setDocFile(e.target.files[0])}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      const f = e.target.files[0];
+                      setDocFile(f);
+                      runClientEstimate(f);
+                    }
+                  }}
                 />
               </label>
             )}
@@ -453,9 +531,9 @@ export const NewAnalysisPage: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {[
-            { id: 'light_copyediting', title: 'Minimal proofreading', desc: 'Targeted clarity and proofreading suggestions. Preserve clear prose and technical content.' },
-            { id: 'academic_revision', title: 'Natural academic editing', desc: 'Direct academic language with proportionate claims and your existing narrative voice.' },
-            { id: 'research_grounded', title: 'Substantive research-grounded revision', desc: 'Use supplied research evidence; identify missing support before proposing new content.' },
+            { id: 'proofreading', title: 'Proofreading and clarity', desc: 'Targeted clarity and proofreading suggestions. Preserve clear prose and technical content.' },
+            { id: 'academic_revision', title: 'Natural academic revision', desc: 'Direct academic language with proportionate claims and natural academic voice.' },
+            { id: 'evidence_review', title: 'Research and evidence-grounded review', desc: 'Use supplied research evidence; identify missing support before proposing revisions.' },
           ].map((mode) => (
             <div
               key={mode.id}

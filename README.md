@@ -1,7 +1,7 @@
 # Writelynx — Academic Writing Integrity, Attribution Auditing & Manuscript Revision Studio
 
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Pytest-127%2F127%20Passed%20(100%25)-success.svg)]()
+[![Tests](https://img.shields.io/badge/Pytest-128%2F128%20Passed%20(100%25)-success.svg)]()
 [![Security Audit](https://img.shields.io/badge/Security%20Suite-60%2F60%20Verified-blue.svg)]()
 [![Target Institution](https://img.shields.io/badge/Institution-Vellore%20Institute%20of%20Technology-blueviolet.svg)]()
 [![Payment Precision](https://img.shields.io/badge/Billing-Integer%20Paise%20(Zero%20Drift)-orange.svg)]()
@@ -27,7 +27,7 @@
 8. [Enterprise Security, VIT Authentication & FinOps Infrastructure](#8-enterprise-security-vit-authentication--finops-infrastructure)
 9. [Commercial Pricing, Unit Economics & Entitlements](#9-commercial-pricing-unit-economics--entitlements)
 10. [Comprehensive REST API Reference](#10-comprehensive-rest-api-reference)
-11. [Automated Test Suite & Verification Results (127/127 Passed)](#11-automated-test-suite--verification-results-127127-passed)
+11. [Automated Test Suite & Verification Results (128/128 Passed)](#11-automated-test-suite--verification-results-128128-passed)
 12. [Complete Technical Documentation Index (22 Reports)](#12-complete-technical-documentation-index-22-reports)
 13. [Local Development Runbook & Production Deployment](#13-local-development-runbook--production-deployment)
 14. [Forensic Repository Provenance & Compliance](#14-forensic-repository-provenance--compliance)
@@ -59,7 +59,7 @@ Academic publishing and university evaluation systems increasingly subject stude
 2. **Deterministic Fact Preservation:** Numerical metrics, experimental constants, data window dimensions, and domain-specific acronyms are identified as invariant facts that cannot be altered or degraded during revision.
 3. **Evidence-Grounded Attribution:** Generic claims ("recent studies show...") are flagged and systematically grounded against uploaded reference papers, bibliographies, or experimental records.
 4. **Author-in-the-Loop Sovereign Control:** Every edit is presented as an isolated, reviewable proposal with three actions: **Accept**, **Reject**, or **Custom Edit**. No changes are forced into the manuscript without explicit author consent.
-5. **Zero-Retention Academic Privacy:** Ephemeral file storage with strict 48-hour automated Time-To-Live (TTL) purging ensures complete compliance with the Indian Digital Personal Data Protection (DPDP) Act 2023. Student research is never retained, logged, or used to fine-tune AI models.
+5. **Zero-Retention Academic Privacy:** Ephemeral file storage with strict 7-day automated Time-To-Live (TTL) purging (and 1-hour abandoned upload sweep) ensures complete compliance with the Indian Digital Personal Data Protection (DPDP) Act 2023. Student research is never retained, logged, or used to fine-tune AI models.
 
 ---
 
@@ -136,7 +136,7 @@ Academic publishing and university evaluation systems increasingly subject stude
                                               │
                                               ▼
                                    [ EPHEMERAL PURGE ENGINE ]
-                                   • 48-Hour TTL automated disk/DB purge
+                                   • 7-Day TTL automated disk/DB purge
                                    • Synchronous student hard delete
 ```
 
@@ -306,7 +306,7 @@ To guarantee positive unit economics on every processed document:
 
 ### 8.4 Ephemeral Privacy & DPDP Compliance
 - **Zero AI Training:** No student text or telemetry is submitted to foundational AI training loops.
-- **48-Hour Automated Purge:** Background reaper task unlinks disk files and purges database rows 48 hours post-creation.
+- **7-Day Automated Purge:** Background reaper task unlinks disk files and purges database rows 7 days post-creation (`RetentionService`).
 - **Synchronous Hard Delete:** Students can trigger an immediate hard delete that unlinks original, quarantine, and export files from disk and removes database records synchronously.
 
 ---
@@ -396,9 +396,9 @@ All internal billing, orders, balances, and upgrades operate strictly in **integ
 
 ---
 
-## 11. Automated Test Suite & Verification Results (127/127 Passed)
+## 11. Automated Test Suite & Verification Results (128/128 Passed)
 
-The entire Writelynx platform has been validated across a 127-test verification suite:
+The entire Writelynx platform has been validated across a 128-test verification suite:
 
 ```bash
 backend/venv/bin/pytest backend/tests -v
@@ -406,7 +406,7 @@ backend/venv/bin/pytest backend/tests -v
 
 ```
 ============================= test session starts ==============================
-collected 127 items
+collected 128 items
 
 backend/tests/test_advanced_features.py ............                     [  9%]
 backend/tests/test_api_workflow.py .                                     [ 10%]
@@ -414,14 +414,14 @@ backend/tests/test_citation_analyzer.py ..                               [ 11%]
 backend/tests/test_docx_preservation.py ...                              [ 14%]
 backend/tests/test_fact_validator.py ....                                [ 17%]
 backend/tests/test_ooxml_integrity.py ......................             [ 34%]
-backend/tests/test_privacy_and_recovery.py ..                            [ 36%]
+backend/tests/test_privacy_and_recovery.py ...                           [ 36%]
 backend/tests/test_revision_manager.py .                                 [ 37%]
 backend/tests/test_similarity_engine.py ..                               [ 38%]
 backend/tests/test_v3_features.py ..................                     [ 52%]
 backend/tests/test_writelynx_security_suite.py ......................... [ 72%]
 ...................................                                      [100%]
 
-============================= 127 passed in 34.78s =============================
+============================= 128 passed in 33.73s =============================
 ```
 
 ### Test Suite Coverage Breakdown
@@ -436,7 +436,7 @@ backend/tests/test_writelynx_security_suite.py ......................... [ 72%]
 | `test_docx_preservation.py` | 3 | Block hierarchy round-trip parsing, paragraph spacing, and font hierarchy retention. |
 | `test_citation_analyzer.py` | 2 | IEEE `[n]` and APA citation parsing, bibliography mapping, and unanchored attribution checks. |
 | `test_similarity_engine.py` | 2 | RapidFuzz token sort matching, Levenshtein distance, and reference document similarity. |
-| `test_privacy_and_recovery.py` | 2 | 48-hour automated TTL file purging and synchronous student hard delete verification. |
+| `test_privacy_and_recovery.py` | 3 | 7-day automated TTL file purging, 1-hour abandoned upload sweep, and synchronous student hard delete verification. |
 | `test_revision_manager.py` | 1 | Accept/Reject/Edit revision lifecycle and audit trail tracking. |
 | `test_api_workflow.py` | 1 | End-to-end API integration flow (upload $\rightarrow$ analysis $\rightarrow$ revision $\rightarrow$ export). |
 
@@ -470,7 +470,7 @@ Exhaustive technical documentation, architectural specifications, threat models,
 | 8 | [COST_GOVERNOR.md](docs/COST_GOVERNOR.md) | FinOps Specification | Hard AI spend limits, token budgeting, circuit breakers, and 4 admin emergency kill switches. |
 | 9 | [HOSTING_DECISION.md](docs/HOSTING_DECISION.md) | Infrastructure Decision | Single VPS Hetzner CPX11 (€5.35/mo) vs AWS/Serverless cost and latency trade-off analysis. |
 | 10 | [PRICING_AND_UNIT_ECONOMICS.md](docs/PRICING_AND_UNIT_ECONOMICS.md) | Financial Model | Tiered pricing unit economics, gross margins (77.1%–79.6%), and break-even models. |
-| 11 | [PRIVACY_AND_RETENTION.md](docs/PRIVACY_AND_RETENTION.md) | Legal & Compliance | Zero AI training policy, Indian DPDP Act (2023) compliance, and 48-hour automated TTL purging. |
+| 11 | [PRIVACY_AND_RETENTION.md](docs/PRIVACY_AND_RETENTION.md) | Legal & Compliance | Zero AI training policy, Indian DPDP Act (2023) compliance, and 7-day automated TTL purging. |
 | 12 | [LICENSE_AUDIT.md](docs/LICENSE_AUDIT.md) | Legal Compliance | Open source license inventory, PyMuPDF AGPL isolation analysis, and BSD migration plan. |
 | 13 | [LOAD_TEST_RESULTS.md](docs/LOAD_TEST_RESULTS.md) | Performance Benchmark | 10 concurrent pipeline benchmarks, SQLite WAL concurrency, and memory footprints. |
 | 14 | [SECURITY_TEST_RESULTS.md](docs/SECURITY_TEST_RESULTS.md) | Security Audit Report | Complete scenario-by-scenario forensic verification of all 60 security tests. |
@@ -545,7 +545,9 @@ OPENAI_API_KEY=""
 
 # Storage & Privacy
 STORAGE_PATH="./backend/storage"
-PURGE_TTL_HOURS=48
+DOCUMENT_RETENTION_DAYS=7
+ABANDONED_UPLOAD_HOURS=1
+QUARANTINE_PURGE_HOURS=2
 ```
 
 ### 13.4 Running Automated Verification
@@ -566,5 +568,5 @@ cd frontend && npm run build
 
 - **Official Upstream Repository:** `https://github.com/nikhilanand0105/-writelynx.git`
 - **Target Institution:** Vellore Institute of Technology (VIT), Vellore / Chennai / AP / Bhopal.
-- **Data Governance:** Fully compliant with the Indian Digital Personal Data Protection (DPDP) Act 2023. No student data is sold, stored beyond 48 hours, or used to fine-tune foundational AI models.
+- **Data Governance:** Fully compliant with the Indian Digital Personal Data Protection (DPDP) Act 2023. No student data is sold, stored beyond 7 days, or used to fine-tune foundational AI models.
 - **Isolation Guarantee:** Unrelated external projects (e.g. QuantLens-XAI) are completely separated and isolated from this codebase. All Writelynx operations are self-contained within this repository.

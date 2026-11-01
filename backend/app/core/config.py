@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8000", "http://127.0.0.1:8000"]
     MAX_PDF_PAGES: int = 500
     MAX_EVIDENCE_TEXT_CHARS: int = 2_000_000
+    
+    # Document Retention Policy (Phase 18)
+    DOCUMENT_RETENTION_DAYS: int = int(os.getenv("DOCUMENT_RETENTION_DAYS", "7"))  # 7 days for completed outputs
+    ABANDONED_UPLOAD_HOURS: int = int(os.getenv("ABANDONED_UPLOAD_HOURS", "1"))    # 1 hour for abandoned uploads
+    QUARANTINE_PURGE_HOURS: int = int(os.getenv("QUARANTINE_PURGE_HOURS", "2"))    # 2 hours for failed quarantine files
 
     @model_validator(mode="after")
     def derive_storage_paths(self):

@@ -16,6 +16,7 @@ from backend.app.models.models import (
     UserRestriction,
     PaymentWebhookEvent,
 )
+from backend.app.services.retention_service import RetentionService
 
 router = APIRouter(prefix="/admin", tags=["Administration & Telemetry"])
 
@@ -179,6 +180,25 @@ def restrict_user(
         "email": user.email,
         "restriction_type": payload.restriction_type,
         "reason": payload.reason,
+    }
+
+
+@router.post("/retention/purge")
+def trigger_retention_purge(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger automated privacy purge (Phase 18):
+    - Purges abandoned uploads older than 1 hour
+    - Purges failed quarantine files older than 2 hours
+    - Purges completed documents and exports older than 7 days
+    """
+    results = RetentionService.run_all_purges(db)
+    return {
+        "status": "success",
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "purged_records": results
     }
 
 

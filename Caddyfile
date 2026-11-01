@@ -1,0 +1,56 @@
+# ==============================================================================
+# WRITELYNX PRODUCTION CADDY CONFIGURATION
+# High-performance reverse proxy, automatic SSL/TLS, static file server & security headers
+# ==============================================================================
+
+{$DOMAIN:localhost} {
+    # Encode responses using gzip and zstandard
+    encode zstd gzip
+
+    # Request body size limit (Extended tier max 30 MB + 5 MB overhead)
+    request_body {
+        max_size 35MB
+    }
+
+    # Security & Privacy Headers (Phase 17 & Phase 18)
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Static asset caching
+    @static {
+        path /assets/*
+    }
+    header @static Cache-Control "public, max-age=31536000, immutable"
+
+    # Route API calls to FastAPI backend container
+    handle /api/* {
+        reverse_proxy backend:8000 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up Host {host}
+        }
+    }
+
+    # Serve compiled React frontend application with client-side SPA fallback
+    handle {
+        root * /srv/frontend/dist
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Access logging
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10MB
+            roll_keep 5
+        }
+    }
+}

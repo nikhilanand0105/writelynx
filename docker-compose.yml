@@ -1,0 +1,84 @@
+# ==============================================================================
+# WRITELYNX SINGLE-VPS PRODUCTION DOCKER COMPOSE TOPOLOGY
+# Services:
+# 1. backend: FastAPI Uvicorn API runtime
+# 2. worker: Isolated background durable job worker (durable_worker.py)
+# 3. caddy: Reverse proxy with automatic TLS, rate limits, and static SPA serving
+# ==============================================================================
+
+version: "3.8"
+
+networks:
+  writelynx_net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: writelynx_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - STORAGE_DIR=/app/storage
+      - DATABASE_URL=sqlite:////app/storage/manuscript_studio.db
+    volumes:
+      - ./storage:/app/storage
+    networks:
+      - writelynx_net
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: writelynx_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - STORAGE_DIR=/app/storage
+      - DATABASE_URL=sqlite:////app/storage/manuscript_studio.db
+    volumes:
+      - ./storage:/app/storage
+    networks:
+      - writelynx_net
+    command: ["python", "-m", "backend.app.workers.durable_worker"]
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: writelynx_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv/frontend/dist:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./logs/caddy:/var/log/caddy
+    networks:
+      - writelynx_net
+    depends_on:
+      - backend

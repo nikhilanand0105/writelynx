@@ -275,12 +275,16 @@ async def run_document_analysis_job(
                 doc_meta = dict(doc.doc_metadata or {})
                 doc_meta["last_error"] = str(e)
                 doc.doc_metadata = doc_meta
+                if doc.entitlement_id:
+                    ent = db.query(Entitlement).filter(Entitlement.id == doc.entitlement_id).first()
+                    if ent and ent.status != "COMPLETED":
+                        ent.status = "FAILED_RETRYABLE"
 
             if job_id:
                 job = db.get(AnalysisJob, job_id)
                 if job:
-                    job.status = "failed"
-                    job.stage = "Analysis failed"
+                    job.status = "retryable_failure"
+                    job.stage = "Analysis failed (retry available)"
                     job.error = str(e)
                     job.finished_at = datetime.datetime.utcnow()
 

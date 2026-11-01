@@ -57,7 +57,7 @@ class NoLLMProvider(BaseLLMProvider):
         reason = ""
         issue_type = mode
 
-        if mode == "minimal":
+        if mode in ("minimal", "proofreading", "light_copyediting"):
             for pat, repl in MINIMAL_REPLACEMENTS:
                 if re.search(pat, revised_text, re.IGNORECASE):
                     revised_text = re.sub(pat, repl, revised_text, flags=re.IGNORECASE)
@@ -65,7 +65,7 @@ class NoLLMProvider(BaseLLMProvider):
             if revised_text == text:
                 return None
 
-        elif mode in ("clarity", "academic_revision"):
+        elif mode in ("clarity", "academic_revision", "natural_academic"):
             # Apply both minimal and academic clarity enhancements
             applied_reasons = []
             for pat, repl in MINIMAL_REPLACEMENTS:
@@ -88,7 +88,7 @@ class NoLLMProvider(BaseLLMProvider):
             else:
                 return None
 
-        elif mode == "natural_student_research":
+        elif mode in ("natural_student_research", "evidence_review", "research_grounded"):
             # Natural Student Research Writing Mode:
             # Replaces promotional hype, tempers absolute claims, removes wordiness,
             # and emphasizes direct, authentic academic voice based on real implementation.
