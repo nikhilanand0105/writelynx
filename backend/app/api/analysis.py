@@ -60,16 +60,30 @@ async def start_analysis(
             detail="Concurrent processing limit reached. You can only analyze 1 document at a time."
         )
 
-    # 3. Validate Entitlement state
-    if doc.entitlement_id:
-        ent = db.query(Entitlement).filter(Entitlement.id == doc.entitlement_id).first()
-        if ent:
-            if ent.status in ("COMPLETED", "REFUNDED", "OVER_LIMIT_PENDING_UPGRADE"):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"This manuscript's entitlement is in '{ent.status}' state and cannot be re-analyzed."
-                )
-            ent.status = "PROCESSING"
+    # 3. Validate Entitlement state (Item 8: Strict entitlement gating)
+    if not doc.entitlement_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manuscript has no associated paid entitlement. Analysis requires a verified purchase."
+        )
+
+    ent = db.query(Entitlement).filter(
+        Entitlement.id == doc.entitlement_id,
+        Entitlement.user_id == doc.user_id,
+    ).first()
+
+    if not ent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Valid paid entitlement not found for this manuscript."
+        )
+
+    if ent.status in ("COMPLETED", "REFUNDED", "OVER_LIMIT_PENDING_UPGRADE"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"This manuscript's entitlement is in '{ent.status}' state and cannot be analyzed."
+        )
+    ent.status = "PROCESSING"
 
     doc.processing_status = "analyzing"
     job_id = str(uuid.uuid4())
@@ -84,14 +98,16 @@ async def start_analysis(
     db.add(job)
     db.commit()
 
-    # Reconciled execution: Launch asynchronous task to claim and execute the job
-    background_tasks.add_task(
-        run_document_analysis_job,
-        document_id=doc.id,
-        editing_mode=req.editing_mode,
-        llm_provider=req.llm_provider,
-        job_id=job_id
-    )
+    # Reconciled execution (Item 7): Only dispatch via BackgroundTasks if durable worker daemon is disabled
+    from backend.app.core.config import settings
+    if not settings.ENABLE_DURABLE_WORKER:
+        background_tasks.add_task(
+            run_document_analysis_job,
+            document_id=doc.id,
+            editing_mode=req.editing_mode,
+            llm_provider=req.llm_provider,
+            job_id=job_id
+        )
 
     return {
         "success": True,
@@ -158,6 +174,26 @@ def get_analysis_results(
         metrics=DiagnosticMetrics(**metrics_dict),
         findings=findings
     )
+
+
+@jobs_router.get("/{job_id}")
+def get_job_status(
+    job_tuple=Depends(get_authorized_job),
+    db: Session = Depends(get_db)
+):
+    """Inspect durable job progress and lifecycle stage for authorized student."""
+    job, doc = job_tuple
+    return {
+        "job_id": job.id,
+        "document_id": job.document_id,
+        "status": job.status,
+        "stage": job.stage,
+        "progress": job.progress,
+        "cancel_requested": job.cancel_requested,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "error_message": job.error_message,
+    }
 
 
 @jobs_router.post("/{job_id}/cancel")

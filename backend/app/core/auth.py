@@ -103,6 +103,13 @@ def verify_google_oauth_token(id_token_str: str) -> dict:
         email = id_info.get("email", "").lower().strip()
         hd = id_info.get("hd", "").lower().strip()
 
+        # Enforce that institutional Google Workspace hosted domain claim 'hd' is present and matches
+        if not hd or hd != settings.ALLOWED_STUDENT_DOMAIN.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access restricted: Token must belong to verified institutional workspace domain (@{settings.ALLOWED_STUDENT_DOMAIN})."
+            )
+
         if not verify_vit_email_domain(email, hd):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

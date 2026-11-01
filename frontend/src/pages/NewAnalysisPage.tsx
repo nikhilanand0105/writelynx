@@ -74,6 +74,20 @@ export const NewAnalysisPage: React.FC = () => {
           name: 'Writelynx Academic Studio',
           description: `${tier.toUpperCase()} Plan - Single-Use Manuscript Slot`,
           order_id: order.order_id,
+          config: {
+            display: {
+              blocks: {
+                upi: {
+                  name: 'Pay via UPI',
+                  instruments: [{ method: 'upi' }],
+                },
+              },
+              sequence: ['block.upi'],
+              preferences: {
+                show_default_blocks: true,
+              },
+            },
+          },
           handler: async (response: any) => {
             try {
               setUploadProgress('Verifying payment on server...');
@@ -92,6 +106,17 @@ export const NewAnalysisPage: React.FC = () => {
         rzp.open();
         setIsUploading(false);
       } else {
+        const isDevMockAllowed =
+          import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_PAYMENTS === 'true';
+
+        if (!isDevMockAllowed) {
+          setIsUploading(false);
+          setErrorMsg(
+            'Payment gateway (Razorpay) failed to load. Please ensure your ad-blocker allows checkout.razorpay.com and refresh the page.'
+          );
+          return;
+        }
+
         // Test sandbox mode fallback
         setUploadProgress('Fulfilling transaction in sandbox test mode...');
         await api.verifyPayment(
@@ -127,6 +152,20 @@ export const NewAnalysisPage: React.FC = () => {
           name: 'Writelynx Plan Upgrade',
           description: `Upgrade to ${overageInfo.recommended_tier.toUpperCase()}`,
           order_id: upgOrder.order_id,
+          config: {
+            display: {
+              blocks: {
+                upi: {
+                  name: 'Pay via UPI',
+                  instruments: [{ method: 'upi' }],
+                },
+              },
+              sequence: ['block.upi'],
+              preferences: {
+                show_default_blocks: true,
+              },
+            },
+          },
           handler: async (response: any) => {
             try {
               setUploadProgress('Verifying upgrade on server...');
@@ -150,6 +189,17 @@ export const NewAnalysisPage: React.FC = () => {
         rzp.open();
         setIsUploading(false);
       } else {
+        const isDevMockAllowed =
+          import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_PAYMENTS === 'true';
+
+        if (!isDevMockAllowed) {
+          setIsUploading(false);
+          setErrorMsg(
+            'Payment gateway (Razorpay) failed to load for upgrade. Please check your connection and refresh.'
+          );
+          return;
+        }
+
         setUploadProgress(`Fulfilling upgrade for ₹${upgOrder.upgrade_amount_rupees} in test mode...`);
         await api.verifyUpgrade(
           overageInfo.entitlement_id,

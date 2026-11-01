@@ -18,22 +18,44 @@ def test_full_api_workflow():
     assert res_health.status_code == 200
     assert res_health.json()["status"] == "healthy"
 
-    # Authenticate student
-    login_res = client.post("/api/auth/google-login", json={"id_token": "mock-21bce1001@vitstudent.ac.in"})
+    # Authenticate student with dedicated isolated workflow user
+    login_res = client.post("/api/auth/google-login", json={"id_token": "mock-workflow:21bce9999@vitstudent.ac.in"})
     assert login_res.status_code == 200
     token = login_res.json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 2. Upload Document
+    # Purchase single-use processing slot
+    res_order = client.post("/api/payments/create-order", json={"plan_tier": "basic", "operating_mode": "academic_revision"}, headers=headers)
+    assert res_order.status_code == 200
+    ord_id = res_order.json()["order_id"]
+
+    res_pay = client.post(
+        "/api/payments/verify",
+        json={
+            "razorpay_order_id": ord_id,
+            "razorpay_payment_id": f"pay_{ord_id}",
+            "razorpay_signature": f"mock_sig_{ord_id}_pay_{ord_id}",
+        },
+        headers=headers,
+    )
+    assert res_pay.status_code == 200
+    ent_id = res_pay.json()["entitlement_id"]
+
+    res_tok = client.post("/api/upload-gate/request-token", data={"entitlement_id": ent_id}, headers=headers)
+    assert res_tok.status_code == 200
+    tok = res_tok.json()["upload_token"]
+
+    # 2. Upload Document via quarantine upload gate
     with open(SAMPLE_DOC, "rb") as f:
         res_upload = client.post(
-            "/api/documents/upload",
+            "/api/upload-gate/upload",
+            data={"upload_token": tok},
             files={"file": ("academic_research_report.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
             headers=headers
         )
     assert res_upload.status_code == 200
     doc_data = res_upload.json()
-    doc_id = doc_data["id"]
+    doc_id = doc_data["document_id"]
     assert doc_data["word_count"] > 100
     assert doc_data["table_count"] == 1
 

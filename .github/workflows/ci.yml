@@ -1,0 +1,67 @@
+name: Writelynx CI / CD Pipeline & Security Audit
+
+on:
+  push:
+    branches: [ main, "remediation/**" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-test:
+    name: Backend Test Suite & Security Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install system dependencies (LibreOffice & Poppler)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice libreoffice-writer poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          python -m spacy download en_core_web_sm
+
+      - name: Run Pytest Test Suite
+        env:
+          ENVIRONMENT: development
+          TEST_MODE_MOCK_AUTH: "1"
+          TEST_MODE_MOCK_PAYMENTS: "1"
+          LIBREOFFICE_PATH: /usr/bin/soffice
+        run: |
+          pytest backend/tests/ -v --durations=10
+
+  frontend-build:
+    name: Frontend Build & Typecheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Vite production build
+        run: |
+          cd frontend
+          npm run build

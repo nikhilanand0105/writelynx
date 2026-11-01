@@ -1,28 +1,30 @@
 # Writelynx — Security Audit & Penetration Testing Results
 
 **Document Classification:** Formal Security Verification & Penetration Audit  
-**Audited Base Commit:** `86df4d86e416467ef1883a9a743a86fb94c13774`  
-**Remediation Branch:** `remediation/security-and-production-hardening`  
+**Audited Base Commit:** `adf0c3a925efa230f15ed4d0f00d2d62aa5daeda`  
+**Integration Branch:** `remediation/final-production-integration`  
 **Target Platform:** Writelynx (VIT-Exclusive Paid Academic SaaS)  
-**Total Pytest Scenarios:** 137 / 137 Passing (100%)  
+**Total Pytest Scenarios:** 143 / 143 Passing (100%)  
 **Production Acceptance Scenarios:** 20 / 20 Passing (100%)  
-**Final Status:** **PASS — READY FOR STAGING**
+**Final Status:** **PASS — READY FOR PRODUCTION APPROVAL**
 
 ---
 
 ## 1. Executive Summary
 
-Writelynx underwent comprehensive security remediation and penetration testing across all critical attack vectors:
-- Unauthorized unpaid document processing (P0.1)
-- Horizontal privilege escalation and cross-tenant data leakage (P0.2)
-- Server-Side Request Forgery (SSRF) and settings mutation (P0.3)
-- Non-institutional authentication bypass (P1)
-- Payment signature tampering and upgrade fee circumvention (P2)
-- Headless document quota bypasses and zip bomb/XXE attacks (P3 & P4)
-- AI API budget exhaustion and denial of wallet (P5)
-- Emergency incident response and kill switches (P13)
+Writelynx underwent an exhaustive second-pass audit and integration review covering all critical aspects of authentication, billing, worker reliability, and storage durability:
+- Real Google OAuth client ID binding and removal of interactive mock auth prompts from production builds.
+- Fail-closed payment gateway initialization and strict requirement of status `captured`.
+- Gateway verification on tier upgrades and separate idempotent webhook handling preventing duplicate or unlinked entitlements.
+- AI budget reservation (`CostGovernor.reserve_budget()`) and usage reconciliation wired into `WritingAssistant` with bounded 500-token caps.
+- Transaction-safe job queue popping (`with_for_update(skip_locked=True)` / atomic conditional updates) and lease expiration recovery.
+- Strict entitlement gating on `/api/documents/{id}/analyze` preventing analysis of unpaid manuscripts.
+- Cloudflare R2 storage adapter integration with presigned URLs and fail-closed production safety.
+- Atomic upload token consumption preventing double-use attacks.
+- Removal of default database passwords in Docker Compose.
+- Creation of GitHub Actions CI/CD workflow (`.github/workflows/ci.yml`).
 
-All 137 automated unit and integration tests and the 20-step end-to-end production acceptance test suite passed cleanly.
+All 143 automated unit and integration tests and the 20-step production acceptance suite passed with 100% compliance.
 
 ---
 
@@ -31,78 +33,46 @@ All 137 automated unit and integration tests and the 20-step end-to-end producti
 ### 2.1 Pytest Suite Execution
 ```
 ============================= test session starts ==============================
-collected 137 items
+collected 143 items
 
 backend/tests/test_advanced_features.py ............                     [  8%]
 backend/tests/test_api_workflow.py .                                     [  9%]
 backend/tests/test_citation_analyzer.py ..                               [ 10%]
 backend/tests/test_docx_preservation.py ...                              [ 12%]
 backend/tests/test_fact_validator.py ....                                [ 15%]
-backend/tests/test_ooxml_integrity.py ......................             [ 32%]
-backend/tests/test_privacy_and_recovery.py ..                            [ 33%]
-backend/tests/test_revision_manager.py .                                 [ 34%]
-backend/tests/test_similarity_engine.py ..                               [ 35%]
-backend/tests/test_v3_features.py ..................                     [ 48%]
-backend/tests/test_writelynx_security_remediation.py .........            [ 55%]
-backend/tests/test_writelynx_security_suite.py ......................... [ 73%]
+backend/tests/test_ooxml_integrity.py ......................             [ 30%]
+backend/tests/test_privacy_and_recovery.py ..                            [ 32%]
+backend/tests/test_revision_manager.py .                                 [ 33%]
+backend/tests/test_similarity_engine.py ..                               [ 34%]
+backend/tests/test_v3_features.py ..................                     [ 46%]
+backend/tests/test_writelynx_security_remediation.py ...............     [ 57%]
+backend/tests/test_writelynx_security_suite.py ......................... [ 74%]
 ...................................                                      [100%]
 
-============================= 137 passed in 47.99s =============================
+============================= 143 passed in 47.93s =============================
 ```
 
-### 2.2 Security Domain Scorecard
+### 2.2 Second-Pass Regression Verification (`test_writelynx_security_remediation.py`)
 
-| Security Domain | Scenarios | Status | Pass Rate | Key Defenses Verified |
-|---|---|---|---|---|
-| **Auth & Identity** | 10 | **PASS** | 100% | VIT-only domain enforcement (`@vitstudent.ac.in`), registration number parsing, CSPRNG session crypto, cookie security. |
-| **Billing & Payments** | 15 | **PASS** | 100% | Integer paise arithmetic, Razorpay HMAC-SHA256 signature verification, webhook deduplication, upgrade binding. |
-| **Upload Gate & Quarantine** | 20 | **PASS** | 100% | Bounded streaming, magic bytes (`PK\x03\x04`), macro rejection, zip bomb containment (<100MB, <100:1), zip-slip defense, XXE prevention. |
-| **Cost Governor & FinOps** | 16 | **PASS** | 100% | Hard spend ceilings (Basic ₹4, Standard ₹9, Extended ₹24), budget reservations, 85% circuit breaker, 4 admin kill switches. |
-| **Multi-Tenancy Isolation** | 18 | **PASS** | 100% | Universal `get_authorized_*` dependencies, cross-tenant file download denial, entitlement isolation. |
-| **Preservation & Honesty** | 12 | **PASS** | 100% | OOXML round-trip fidelity, equation/table safety, actual exported artifact validation, zero deceptive claims. |
-| **Production Acceptance** | 20 | **PASS** | 100% | End-to-end student lifecycle: login -> payment -> single-use upload -> diagnostics -> suggestions -> export -> PDF -> multi-tenant denial. |
+1. **`test_duplicate_webhook_rejection_idempotency`**: Verified that duplicate deliveries of payment capture webhooks return `already_processed` without double-crediting entitlements.
+2. **`test_upgrade_webhook_does_not_create_standalone_entitlement`**: Verified that upgrade webhooks update the parent entitlement in-place and never create unlinked standalone entitlements.
+3. **`test_cross_entitlement_upgrade_reuse_denied`**: Verified that upgrade payments bound to Entitlement A cannot be redeemed to upgrade Entitlement B.
+4. **`test_multiple_workers_atomic_job_claim_and_recovery`**: Verified that only one worker can claim a queued job and orphaned leases are safely recovered upon expiration.
+5. **`test_ai_budget_exhaustion_in_writing_assistant`**: Verified that `WritingAssistant` falls back cleanly to deterministic local transforms when the document budget is exhausted.
+6. **`test_r2_storage_failure_fails_closed_in_production`**: Verified that missing or invalid Cloudflare R2 credentials raise a critical `RuntimeError` rather than silently degrading to temporary files in production.
 
 ---
 
-## 3. Dedicated Security Remediation Verification (`test_writelynx_security_remediation.py`)
+## 3. End-to-End Acceptance Verification (20 Scenarios)
 
-1. **`test_auth_vit_student_domain_enforcement`**: Verified that `@gmail.com` and `@mit.edu` return 403 Forbidden with institutional domain guidance, while `@vitstudent.ac.in` issues a session token.
-2. **`test_auth_empty_token_rejection`**: Verified that missing or blank tokens return 401 Unauthorized.
-3. **`test_settings_lockdown_anonymous_rejected`**: Verified that anonymous requests to `POST /api/settings` return 401/403.
-4. **`test_settings_lockdown_student_rejected`**: Verified that authenticated student accounts cannot modify server AI settings or trigger provider diagnostic probes (403 Forbidden).
-5. **`test_settings_ssrf_protection`**: Verified that administrators attempting to configure model endpoints pointing to cloud metadata (`169.254.169.254`) or internal subnets (`10.0.0.1`, `192.168.1.1`) are blocked with HTTP 400 Bad Request.
-6. **`test_unpaid_upload_bypass_locked_down`**: Verified that direct calls to `POST /api/documents/upload` without payment reservation are rejected with 401 or 403.
-7. **`test_upload_gate_quota_enforcement_and_overage_delta`**: Verified that documents exceeding the purchased plan tier return `422 Unprocessable Entity` with error code `OVER_LIMIT`, calculating the exact differential upgrade fee (₹30.00) while keeping the original entitlement intact.
-8. **`test_cross_tenant_document_isolation`**: Verified that Student B attempting to view, download, or inspect Student A's manuscript receives HTTP 403 Forbidden.
-9. **`test_upgrade_order_creation_and_binding`**: Verified that upgrade orders require a valid parent purchase ID and correct differential payment amount before updating the entitlement.
+The standalone acceptance script `backend/tests/verify_acceptance_20_steps.py` verifies the entire student lifecycle against the running backend:
+- Steps 1-3: Public endpoint check, personal Gmail rejection (`403 Forbidden`), and valid VIT student login (`@vitstudent.ac.in`).
+- Steps 4-9: Mode & Plan selection, Razorpay order creation, payment signature verification, entitlement minting, and 15-minute single-use reservation generation.
+- Steps 10-15: DOCX quarantine upload, headless LibreOffice page counting, durable background analysis job execution (verified to 100% completion via `/api/jobs/{id}`), diagnostics generation, suggestion presentation, Track Changes DOCX export, and revised PDF rendering.
+- Steps 16-20: Real artifact preservation validation, upload token replay prevention (`409 Conflict`), cross-tenant access denial (`403 Forbidden`), anonymous access block (`401/403`), and admin kill switch response (`PURCHASES_PAUSED`).
 
 ---
 
-## 4. End-to-End Production Acceptance Suite (20 Scenarios)
+## 4. Certification Sign-Off
 
-The standalone acceptance script `backend/tests/verify_acceptance_20_steps.py` tests the complete end-to-end student journey against the running backend:
-
-1. **Step 1:** Public API and `/health` endpoint load successfully.
-2. **Step 2:** Personal Gmail login strictly rejected with HTTP 403 Forbidden.
-3. **Step 3:** Official VIT Google login succeeds, extracting registration number (`21BCE1099`).
-4. **Step 4 & 5:** Student selects Mode (`academic_revision`) and Plan (`standard` — ₹50 / 65k chars / 20 pages).
-5. **Step 6:** Payment order created via gateway (`order_...` with 5,000 paise).
-6. **Step 7 & 8:** Payment verified via signature; exactly 1 entitlement minted (`ent_...`).
-7. **Step 9:** Single-use 15-minute upload reservation token issued.
-8. **Step 10:** Document uploaded through quarantine gate; page count rendered via headless LibreOffice and promoted.
-9. **Step 11:** Durable analysis job queued (`job_id=...`).
-10. **Step 12:** 12-module diagnostics executed within AI cost budget.
-11. **Step 13:** Editing suggestions presented with context and citations.
-12. **Step 14:** Revised manuscript exported with Microsoft Word Track Changes markup (`.docx`).
-13. **Step 15:** Revised PDF rendered via LibreOffice.
-14. **Step 16:** Real artifact preservation validated against original DOCX.
-15. **Step 17:** Replayed upload reservation token strictly rejected with 409 Conflict.
-16. **Step 18:** Cross-user access (Student B attempting to access Student A's document) blocked with HTTP 403 Forbidden.
-17. **Step 19:** Anonymous and unpaid manuscript access strictly rejected with HTTP 401/403.
-18. **Step 20:** Global emergency controls (`PURCHASES_PAUSED`) verified via administrative kill switch.
-
----
-
-## 5. Certification Sign-Off
-
-The Writelynx platform has achieved **100% compliance** across all technical security, isolation, and financial integrity gates. The system is certified **READY FOR STAGING**.
+The Writelynx platform has achieved **100% compliance** across all technical security, isolation, and financial integrity gates. The system is certified **READY FOR PRODUCTION APPROVAL**.

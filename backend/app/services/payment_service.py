@@ -96,13 +96,24 @@ class PaymentService:
                 order_id = rzp_order["id"]
             except Exception as e:
                 logger.error(f"Razorpay order creation failed: {e}")
-                if settings.ENVIRONMENT == "production":
+                if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_PAYMENTS:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="Payment gateway communication error. Please try again."
                     )
+        else:
+            if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_PAYMENTS:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Payment gateway is unavailable or unconfigured. Cannot initialize checkout."
+                )
 
         if not order_id:
+            if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_PAYMENTS:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Payment gateway failed to issue an authoritative order ID."
+                )
             order_id = f"order_{secrets.token_hex(10)}"
 
         # Create record in DB
@@ -211,10 +222,15 @@ class PaymentService:
         if client and not signature.startswith("mock_sig_"):
             try:
                 pay_data = client.payment.fetch(payment_id)
-                if pay_data.get("status") not in ("captured", "authorized"):
+                if pay_data.get("status") != "captured":
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Payment has not been captured by the gateway."
+                        detail=f"Payment status is '{pay_data.get('status')}', but requires 'captured' before fulfillment."
+                    )
+                if pay_data.get("order_id") and pay_data.get("order_id") != order_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Payment is not associated with this order ID."
                     )
                 if pay_data.get("amount") != purchase.amount_paise:
                     raise HTTPException(
@@ -335,8 +351,24 @@ class PaymentService:
                 order_id = rzp_order["id"]
             except Exception as e:
                 logger.error(f"Razorpay upgrade order creation failed: {e}")
+                if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_PAYMENTS:
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Payment gateway communication error on upgrade."
+                    )
+        else:
+            if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_PAYMENTS:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Payment gateway is unconfigured in production/staging."
+                )
 
         if not order_id:
+            if settings.ENVIRONMENT in ("production", "staging") or not settings.TEST_MODE_MOCK_PAYMENTS:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Payment gateway failed to issue an authoritative upgrade order ID."
+                )
             order_id = f"order_upg_{secrets.token_hex(10)}"
 
         # Save upgrade purchase record with strict binding to original purchase and entitlement
@@ -410,6 +442,16 @@ class PaymentService:
                 detail="Upgrade purchase order not found or does not belong to student."
             )
 
+        if purchase.status == "COMPLETED":
+            # Idempotent return
+            return {
+                "status": "already_upgraded",
+                "entitlement_id": entitlement.id,
+                "plan_tier": entitlement.plan_tier,
+                "max_pages": entitlement.max_pages,
+                "max_characters": entitlement.max_characters,
+            }
+
         # Priority 2.5: Validate that the purchase is strictly bound to this entitlement and target tier
         if not purchase.is_upgrade:
             raise HTTPException(
@@ -435,6 +477,40 @@ class PaymentService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Upgrade payment amount does not match required tier difference."
             )
+
+        # Independently verify upgrade payment with gateway
+        client = get_razorpay_client()
+        if client and not signature.startswith("mock_sig_"):
+            try:
+                pay_data = client.payment.fetch(payment_id)
+                if pay_data.get("status") != "captured":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Upgrade payment status is '{pay_data.get('status')}', but requires 'captured' before fulfillment."
+                    )
+                if pay_data.get("order_id") and pay_data.get("order_id") != order_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Upgrade payment is not associated with this order ID."
+                    )
+                if pay_data.get("amount") != purchase.amount_paise:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Mismatched upgrade payment amount reported by gateway."
+                    )
+                if pay_data.get("currency") != "INR":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Payment currency must be INR."
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Gateway upgrade payment fetch failed: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to independently verify upgrade payment status with gateway: {str(e)}"
+                )
 
         purchase.razorpay_payment_id = payment_id
         purchase.razorpay_signature = signature
@@ -523,22 +599,37 @@ class PaymentService:
                     purchase.razorpay_payment_id = payment_id
                     purchase.status = "COMPLETED"
 
-                    existing_ent = db.query(Entitlement).filter(Entitlement.purchase_id == purchase.id).first()
-                    if not existing_ent:
-                        plan = cls.get_plan_config(purchase.plan_tier)
-                        new_ent = Entitlement(
-                            id=f"ent_{secrets.token_hex(12)}",
-                            user_id=purchase.user_id,
-                            purchase_id=purchase.id,
-                            plan_tier=purchase.plan_tier,
-                            operating_mode=purchase.operating_mode,
-                            max_pages=plan["max_pages"],
-                            max_characters=plan["max_characters"],
-                            max_file_size_mb=plan["max_file_size_mb"],
-                            ai_budget_paise=plan["ai_budget_paise"],
-                            status="AVAILABLE",
-                        )
-                        db.add(new_ent)
+                    if purchase.is_upgrade:
+                        # Item 5: Dedicated upgrade fulfillment path — update existing parent entitlement, never create a new one
+                        parent_ent = db.query(Entitlement).filter(
+                            Entitlement.purchase_id == purchase.parent_purchase_id
+                        ).first()
+                        if parent_ent:
+                            target_plan = cls.get_plan_config(purchase.plan_tier)
+                            parent_ent.plan_tier = purchase.plan_tier.lower()
+                            parent_ent.max_pages = target_plan["max_pages"]
+                            parent_ent.max_characters = target_plan["max_characters"]
+                            parent_ent.max_file_size_mb = target_plan["max_file_size_mb"]
+                            parent_ent.ai_budget_paise = target_plan["ai_budget_paise"]
+                            if parent_ent.status == "OVER_LIMIT_PENDING_UPGRADE":
+                                parent_ent.status = "AVAILABLE"
+                    else:
+                        existing_ent = db.query(Entitlement).filter(Entitlement.purchase_id == purchase.id).first()
+                        if not existing_ent:
+                            plan = cls.get_plan_config(purchase.plan_tier)
+                            new_ent = Entitlement(
+                                id=f"ent_{secrets.token_hex(12)}",
+                                user_id=purchase.user_id,
+                                purchase_id=purchase.id,
+                                plan_tier=purchase.plan_tier,
+                                operating_mode=purchase.operating_mode,
+                                max_pages=plan["max_pages"],
+                                max_characters=plan["max_characters"],
+                                max_file_size_mb=plan["max_file_size_mb"],
+                                ai_budget_paise=plan["ai_budget_paise"],
+                                status="AVAILABLE",
+                            )
+                            db.add(new_ent)
 
         webhook_rec.processed = True
         db.commit()

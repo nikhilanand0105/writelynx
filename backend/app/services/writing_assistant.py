@@ -67,7 +67,28 @@ class WritingAssistant:
             else:
                 effective_mode = mode
 
-            # Call provider
+            # Item 6: Atomic budget reservation before external provider invocation
+            prov_name = getattr(active_provider, "name", self.provider_name or "no_llm")
+            reservation_id: Optional[str] = None
+            if db and document_id and prov_name not in ("no_llm", "ollama", "base"):
+                est_in = len(context.split()) * 2
+                est_out = 500  # Bounded output tokens
+                can_proceed, res_id, reason = CostGovernor.reserve_budget(
+                    db=db,
+                    document_id=document_id,
+                    plan_tier=plan_tier,
+                    estimated_input_tokens=est_in,
+                    estimated_output_tokens=est_out,
+                    provider=prov_name,
+                )
+                if not can_proceed:
+                    # Budget ceiling or circuit breaker hit: fallback cleanly to zero-cost deterministic rule transforms
+                    active_provider = get_llm_provider("no_llm")
+                    prov_name = "no_llm"
+                else:
+                    reservation_id = res_id
+
+            # Call provider with bounded context
             raw_sug = await active_provider.generate_suggestion(
                 block_id=block["id"],
                 original_text=orig_text,
@@ -76,19 +97,17 @@ class WritingAssistant:
                 matched_source_text=matched_source_text
             )
 
-            # Record AI cost reservation
-            prov_name = getattr(active_provider, "name", "no_llm")
-            if db and document_id and prov_name not in ("no_llm", "ollama", "base"):
-                prompt_toks = len(context.split()) * 2
-                comp_toks = len(raw_sug.get("proposed_text", "").split()) * 2 if raw_sug else 0
-                CostGovernor.record_cost(
+            # Item 6: Post-call usage reconciliation
+            if db and reservation_id:
+                actual_prompt = len(context.split()) * 2
+                actual_comp = len(raw_sug.get("proposed_text", "").split()) * 2 if raw_sug else 0
+                CostGovernor.reconcile_reservation(
                     db=db,
-                    document_id=document_id,
-                    plan_tier=plan_tier,
+                    reservation_id=reservation_id,
+                    actual_prompt_tokens=actual_prompt,
+                    actual_completion_tokens=actual_comp,
                     provider=prov_name,
-                    model_name="default",
-                    prompt_tokens=prompt_toks,
-                    completion_tokens=comp_toks,
+                    model_name=getattr(active_provider, "model_name", "default"),
                 )
 
             if raw_sug and raw_sug.get("proposed_text") != orig_text:

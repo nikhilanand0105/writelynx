@@ -217,7 +217,13 @@ class QuarantineInspector:
             if is_authoritative and rendered_pages > 0:
                 final_page_count = rendered_pages
             else:
-                # Conservative fallback
+                # Item 11: In production/staging, fail with a recoverable error if page count cannot be authoritatively determined
+                if settings.ENVIRONMENT in ("production", "staging") and not settings.TEST_MODE_MOCK_AUTH:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Authoritative rendered page counting failed for this document. Please ensure your manuscript is a standard Word document without corrupted embedded objects."
+                    )
+                # Conservative fallback in local development and automated testing
                 final_page_count = max(
                     1,
                     explicit_breaks + 1,

@@ -186,10 +186,19 @@ def download_export(
 ):
     """Download the exported file with parent document ownership authorization."""
     record, doc = export_tuple
-    if not Path(record.file_path).exists():
+    path = Path(record.file_path)
+
+    # Check Cloudflare R2 / presigned URL first
+    from backend.app.services.storage_adapter import get_storage_adapter
+    adapter = get_storage_adapter()
+    presigned = adapter.generate_presigned_download_url(f"exports/{path.name}")
+    if presigned:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=presigned, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    if not path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export file not found on disk.")
 
-    path = Path(record.file_path)
     media_types = {
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "pdf": "application/pdf",

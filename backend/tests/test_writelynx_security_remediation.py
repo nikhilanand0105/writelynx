@@ -317,3 +317,272 @@ def test_preservation_validation_revised_artifact():
     assert report["archive_valid"] is True
     assert report["protected_facts_intact"] is True
     assert report["citation_integrity_intact"] is True
+
+
+# ==============================================================================
+# 6. SECOND-PASS INTEGRATION REGRESSION TESTS (ITEMS 17 & 18)
+# ==============================================================================
+
+def test_duplicate_webhook_rejection_idempotency():
+    """Verify idempotent webhook fulfillment and rejection of duplicate event IDs."""
+    import json
+    from backend.app.core.database import SessionLocal
+    from backend.app.services.payment_service import PaymentService
+    from backend.app.models.models import User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "21bce1001@vitstudent.ac.in").first()
+        order = PaymentService.create_order(db, user, "basic")
+        order_id = order["order_id"]
+
+        webhook_payload = json.dumps({
+            "event_id": f"evt_dup_{order_id}",
+            "event": "payment.captured",
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": f"pay_dup_{order_id}",
+                        "order_id": order_id,
+                        "amount": 2000,
+                        "currency": "INR",
+                        "status": "captured"
+                    }
+                }
+            }
+        }).encode("utf-8")
+
+        # First delivery: processed
+        res1 = PaymentService.handle_webhook_event(db, webhook_payload, "mock_webhook_sig")
+        assert res1["status"] == "processed"
+
+        # Second delivery: deduplicated
+        res2 = PaymentService.handle_webhook_event(db, webhook_payload, "mock_webhook_sig")
+        assert res2["status"] == "already_processed"
+    finally:
+        db.close()
+
+
+def test_upgrade_webhook_does_not_create_standalone_entitlement():
+    """Verify that an upgrade webhook never creates a new unlinked standalone entitlement."""
+    import json
+    from backend.app.core.database import SessionLocal
+    from backend.app.services.payment_service import PaymentService
+    from backend.app.models.models import User, Entitlement
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "21bce1001@vitstudent.ac.in").first()
+        order = PaymentService.create_order(db, user, "basic")
+        res_pay = PaymentService.verify_and_fulfill_payment(
+            db, user, order["order_id"], f"pay_{order['order_id']}", f"mock_sig_{order['order_id']}_pay_{order['order_id']}"
+        )
+        ent_id = res_pay["entitlement_id"]
+
+        # Create upgrade order to standard
+        upg_order = PaymentService.create_upgrade_order(db, user, ent_id, "standard")
+        upg_order_id = upg_order["order_id"]
+
+        ent_count_before = db.query(Entitlement).filter(Entitlement.user_id == user.id).count()
+
+        # Webhook arrives for the upgrade order
+        webhook_payload = json.dumps({
+            "event_id": f"evt_upg_{upg_order_id}",
+            "event": "payment.captured",
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": f"pay_wh_{upg_order_id}",
+                        "order_id": upg_order_id,
+                        "amount": 3000,
+                        "currency": "INR",
+                        "status": "captured"
+                    }
+                }
+            }
+        }).encode("utf-8")
+
+        res_wh = PaymentService.handle_webhook_event(db, webhook_payload, "mock_webhook_sig")
+        assert res_wh["status"] == "processed"
+
+        # Entitlement count must remain identical (updated in-place, NOT incremented)
+        ent_count_after = db.query(Entitlement).filter(Entitlement.user_id == user.id).count()
+        assert ent_count_after == ent_count_before
+
+        # Check in-place upgrade
+        updated_ent = db.get(Entitlement, ent_id)
+        assert updated_ent.plan_tier == "standard"
+        assert updated_ent.max_pages == 20
+    finally:
+        db.close()
+
+
+def test_cross_entitlement_upgrade_reuse_denied():
+    """Verify that an upgrade payment order cannot be reused on a different entitlement."""
+    from backend.app.core.database import SessionLocal
+    from backend.app.services.payment_service import PaymentService
+    from backend.app.models.models import User
+    from fastapi import HTTPException
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "21bce1001@vitstudent.ac.in").first()
+        # Entitlement 1
+        ord1 = PaymentService.create_order(db, user, "basic")
+        res1 = PaymentService.verify_and_fulfill_payment(
+            db, user, ord1["order_id"], f"pay_{ord1['order_id']}", f"mock_sig_{ord1['order_id']}_pay_{ord1['order_id']}"
+        )
+        ent1_id = res1["entitlement_id"]
+
+        # Entitlement 2
+        ord2 = PaymentService.create_order(db, user, "basic")
+        res2 = PaymentService.verify_and_fulfill_payment(
+            db, user, ord2["order_id"], f"pay_{ord2['order_id']}", f"mock_sig_{ord2['order_id']}_pay_{ord2['order_id']}"
+        )
+        ent2_id = res2["entitlement_id"]
+
+        # Create upgrade order bound to Entitlement 1
+        upg_ord = PaymentService.create_upgrade_order(db, user, ent1_id, "standard")
+
+        # Attempt to fulfill Entitlement 2 with Entitlement 1's upgrade order
+        with pytest.raises(HTTPException) as exc:
+            PaymentService.verify_and_fulfill_upgrade(
+                db=db,
+                user=user,
+                entitlement_id=ent2_id,
+                target_tier="standard",
+                order_id=upg_ord["order_id"],
+                payment_id="pay_cross_reuse",
+                signature=f"mock_sig_{upg_ord['order_id']}_pay_cross_reuse",
+            )
+        assert exc.value.status_code == 400
+        assert "not bound to this entitlement" in exc.value.detail
+    finally:
+        db.close()
+
+
+def test_multiple_workers_atomic_job_claim_and_recovery():
+    """Verify that only one worker can claim a queued job and orphaned leases are recovered."""
+    import datetime
+    from backend.app.core.database import SessionLocal
+    from backend.app.services.job_queue import JobQueueService
+    from backend.app.models.models import AnalysisJob, Document, User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "21bce1001@vitstudent.ac.in").first()
+        doc = Document(
+            id="doc_worker_test",
+            user_id=user.id,
+            filename="worker_test.docx",
+            file_path="/tmp/worker_test.docx",
+            file_hash="worker_hash",
+            processing_status="ready"
+        )
+        db.merge(doc)
+        job = AnalysisJob(
+            id="job_worker_race",
+            document_id=doc.id,
+            status="queued",
+            stage="Queued",
+            progress=0,
+            created_at=datetime.datetime.utcnow()
+        )
+        db.merge(job)
+        db.commit()
+
+        # Worker 1 claims job
+        claimed_w1 = JobQueueService.acquire_next_job(db, "worker_alpha", lease_seconds=2)
+        assert claimed_w1 is not None
+        assert claimed_w1.id == "job_worker_race"
+        assert claimed_w1.worker_id == "worker_alpha"
+
+        # Worker 2 immediately attempts to claim: must return None (no duplicate execution)
+        claimed_w2 = JobQueueService.acquire_next_job(db, "worker_beta", lease_seconds=2)
+        assert claimed_w2 is None
+
+        # Simulate lease expiration (Worker 1 crashed)
+        job_in_db = db.get(AnalysisJob, "job_worker_race")
+        job_in_db.lease_expires_at = datetime.datetime.utcnow() - datetime.timedelta(seconds=10)
+        db.commit()
+
+        # Worker 2 now attempts to claim: successfully recovers orphaned job
+        recovered = JobQueueService.acquire_next_job(db, "worker_beta", lease_seconds=60)
+        assert recovered is not None
+        assert recovered.id == "job_worker_race"
+        assert recovered.worker_id == "worker_beta"
+    finally:
+        db.close()
+
+
+def test_ai_budget_exhaustion_in_writing_assistant():
+    """Verify that WritingAssistant falls back cleanly to zero-cost transforms when budget is exhausted."""
+    import asyncio
+    from backend.app.core.database import SessionLocal
+    from backend.app.services.writing_assistant import WritingAssistant
+    from backend.app.services.cost_governor import CostGovernor
+    from backend.app.models.models import AICostReservation, Document, User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "21bce1001@vitstudent.ac.in").first()
+        doc_id = "doc_budget_exhaust"
+        doc = Document(
+            id=doc_id,
+            user_id=user.id,
+            filename="exhaust.docx",
+            file_path="/tmp/exhaust.docx",
+            file_hash="hash_exhaust",
+            processing_status="ready"
+        )
+        db.merge(doc)
+        db.commit()
+
+        # Artificially consume entire budget for basic tier (₹4 = 400 paise)
+        res = AICostReservation(
+            id="aic_full_spend",
+            document_id=doc_id,
+            user_id=user.id,
+            plan_tier="basic",
+            budget_allocated_paise=400,
+            cost_incurred_paise=400,
+            prompt_tokens=1000,
+            completion_tokens=500,
+            provider_used="gemini",
+            model_name="default",
+        )
+        db.merge(res)
+        db.commit()
+
+        # Assistant attempt should succeed via zero-cost fallback
+        assistant = WritingAssistant(provider_name="gemini")
+        blocks = [
+            {"id": "b1", "document_id": doc_id, "block_index": 0, "block_type": "paragraph", "current_text": "The quantitative model shows significant predictability.", "original_text": "The quantitative model shows significant predictability.", "is_protected": False}
+        ]
+
+        suggs = asyncio.run(assistant.generate_document_suggestions(
+            blocks=blocks,
+            mode="clarity",
+            document_id=doc_id,
+            plan_tier="basic",
+            db=db,
+        ))
+        assert isinstance(suggs, list)
+    finally:
+        db.close()
+
+
+def test_r2_storage_failure_fails_closed_in_production(monkeypatch):
+    """Verify that missing or broken R2 credentials fail closed in production rather than silently using temp files."""
+    from backend.app.services.storage_adapter import get_storage_adapter
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "r2")
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    monkeypatch.delenv("R2_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
+
+    with pytest.raises(RuntimeError) as exc:
+        get_storage_adapter()
+    assert "CRITICAL SECURITY BLOCKER" in str(exc.value)

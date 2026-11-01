@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "rzp_test_writelynx")
     RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "mock_razorpay_secret")
     RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "mock_webhook_secret")
+    TEST_MODE_MOCK_PAYMENTS: bool = os.getenv("TEST_MODE_MOCK_PAYMENTS", "1").lower() in ("1", "true", "yes")
+    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "local")
+    ENABLE_DURABLE_WORKER: bool = os.getenv("ENABLE_DURABLE_WORKER", "false").lower() in ("true", "1", "yes")
     
     # Pricing tiers configuration (price in paise, budgets in paise)
     PLAN_CONFIGS: dict = {
@@ -120,10 +123,14 @@ class Settings(BaseSettings):
         if self.ENVIRONMENT == "production":
             if self.TEST_MODE_MOCK_AUTH:
                 raise ValueError("SECURITY BLOCKER: TEST_MODE_MOCK_AUTH must be disabled in production.")
+            if self.TEST_MODE_MOCK_PAYMENTS:
+                raise ValueError("SECURITY BLOCKER: TEST_MODE_MOCK_PAYMENTS must be disabled in production.")
             if not self.GOOGLE_CLIENT_ID or self.GOOGLE_CLIENT_ID == "mock-google-client-id":
                 raise ValueError("SECURITY BLOCKER: Real GOOGLE_CLIENT_ID is required in production.")
             if not self.RAZORPAY_KEY_SECRET or self.RAZORPAY_KEY_SECRET == "mock_razorpay_secret":
                 raise ValueError("SECURITY BLOCKER: Production RAZORPAY_KEY_SECRET must be configured.")
+            if not self.RAZORPAY_KEY_ID or self.RAZORPAY_KEY_ID == "rzp_test_writelynx":
+                raise ValueError("SECURITY BLOCKER: Production RAZORPAY_KEY_ID must be configured.")
 
         # Add custom origins if provided via environment
         env_origins = os.getenv("ALLOWED_ORIGINS", "")

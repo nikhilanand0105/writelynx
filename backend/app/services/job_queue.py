@@ -34,32 +34,109 @@ class JobQueueService:
     ) -> Optional[AnalysisJob]:
         """
         Durable queue pop: atomically fetch and claim next queued analysis job
-        using a database lease with heartbeat.
+        using a database lease with heartbeat. Transaction-safe against concurrent workers.
         """
         if cls.is_processing_paused(db):
             return None
 
-        # Re-tryable or newly queued jobs
-        job = (
+        now = datetime.datetime.utcnow()
+        dialect = db.bind.dialect.name if db.bind else "sqlite"
+
+        # 1. PostgreSQL path with row-level locks and SKIP LOCKED
+        if dialect == "postgresql":
+            job = (
+                db.query(AnalysisJob)
+                .filter(AnalysisJob.status == "queued")
+                .order_by(AnalysisJob.created_at.asc())
+                .with_for_update(skip_locked=True)
+                .first()
+            )
+            if job:
+                job.status = "processing"
+                job.worker_id = worker_id
+                job.started_at = now
+                job.lease_expires_at = now + datetime.timedelta(seconds=lease_seconds)
+                job.stage = "Acquired by worker"
+                job.progress = 5
+                db.commit()
+                db.refresh(job)
+                return job
+
+            # Recover expired lease with row lock
+            stale = (
+                db.query(AnalysisJob)
+                .filter(
+                    AnalysisJob.status == "processing",
+                    AnalysisJob.lease_expires_at < now,
+                )
+                .order_by(AnalysisJob.started_at.asc())
+                .with_for_update(skip_locked=True)
+                .first()
+            )
+            if stale:
+                stale.status = "processing"
+                stale.worker_id = worker_id
+                stale.started_at = now
+                stale.lease_expires_at = now + datetime.timedelta(seconds=lease_seconds)
+                stale.stage = "Recovered after lease timeout"
+                stale.progress = 5
+                db.commit()
+                db.refresh(stale)
+                return stale
+            return None
+
+        # 2. SQLite / generic database path with atomic conditional update
+        candidate = (
             db.query(AnalysisJob)
             .filter(AnalysisJob.status == "queued")
             .order_by(AnalysisJob.created_at.asc())
             .first()
         )
 
-        if not job:
-            return None
+        if candidate:
+            rows = db.query(AnalysisJob).filter(
+                AnalysisJob.id == candidate.id,
+                AnalysisJob.status == "queued",
+            ).update({
+                "status": "processing",
+                "worker_id": worker_id,
+                "started_at": now,
+                "lease_expires_at": now + datetime.timedelta(seconds=lease_seconds),
+                "stage": "Acquired by worker",
+                "progress": 5,
+            })
+            db.commit()
+            if rows > 0:
+                return db.get(AnalysisJob, candidate.id)
 
-        now = datetime.datetime.utcnow()
-        job.status = "processing"
-        job.worker_id = worker_id
-        job.started_at = now
-        job.lease_expires_at = now + datetime.timedelta(seconds=lease_seconds)
-        job.stage = "Acquired by worker"
-        job.progress = 5
-        db.commit()
-        db.refresh(job)
-        return job
+        # Recover expired lease
+        stale = (
+            db.query(AnalysisJob)
+            .filter(
+                AnalysisJob.status == "processing",
+                AnalysisJob.lease_expires_at < now,
+            )
+            .order_by(AnalysisJob.started_at.asc())
+            .first()
+        )
+        if stale:
+            rows = db.query(AnalysisJob).filter(
+                AnalysisJob.id == stale.id,
+                AnalysisJob.status == "processing",
+                AnalysisJob.lease_expires_at < now,
+            ).update({
+                "status": "processing",
+                "worker_id": worker_id,
+                "started_at": now,
+                "lease_expires_at": now + datetime.timedelta(seconds=lease_seconds),
+                "stage": "Recovered after lease timeout",
+                "progress": 5,
+            })
+            db.commit()
+            if rows > 0:
+                return db.get(AnalysisJob, stale.id)
+
+        return None
 
     @classmethod
     def heartbeat(

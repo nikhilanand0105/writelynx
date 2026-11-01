@@ -125,12 +125,31 @@ class CloudflareR2StorageAdapter(StorageAdapter):
 
 
 def get_storage_adapter() -> StorageAdapter:
-    """Factory: selects R2 in cloud hosting if credentials exist, otherwise local."""
+    """Factory: selects Cloudflare R2 in cloud hosting if configured, otherwise local."""
+    backend_choice = getattr(settings, "STORAGE_BACKEND", "local").lower()
     r2_account_id = os.getenv("R2_ACCOUNT_ID")
     r2_access_key = os.getenv("R2_ACCESS_KEY_ID")
     r2_secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
     r2_bucket = os.getenv("R2_BUCKET_NAME", "writelynx-manuscripts")
 
+    # If backend explicitly set to 'r2' or in production where R2 is expected
+    if backend_choice == "r2" or (settings.ENVIRONMENT == "production" and (r2_account_id or r2_access_key)):
+        if not (r2_account_id and r2_access_key and r2_secret_key):
+            raise RuntimeError(
+                "CRITICAL SECURITY BLOCKER: Cloudflare R2 credentials (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) must be fully configured when STORAGE_BACKEND=r2 or in production."
+            )
+        try:
+            return CloudflareR2StorageAdapter(
+                account_id=r2_account_id,
+                access_key_id=r2_access_key,
+                secret_access_key=r2_secret_key,
+                bucket_name=r2_bucket,
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize Cloudflare R2 storage adapter: {e}")
+            raise RuntimeError(f"Cloudflare R2 storage initialization failed: {e}")
+
+    # In dev/test, if R2 credentials provided, try R2
     if r2_account_id and r2_access_key and r2_secret_key:
         try:
             return CloudflareR2StorageAdapter(

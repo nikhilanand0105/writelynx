@@ -23,10 +23,13 @@ export const Navbar: React.FC = () => {
 
     // Initialize Google Identity Services if available on window
     const win = window as any;
+    const googleClientId =
+      import.meta.env.VITE_GOOGLE_CLIENT_ID || '1092837465-mock.apps.googleusercontent.com';
+
     if (win.google?.accounts?.id) {
       try {
         win.google.accounts.id.initialize({
-          client_id: '1092837465-mock.apps.googleusercontent.com',
+          client_id: googleClientId,
           hosted_domain: 'vitstudent.ac.in',
           callback: async (response: any) => {
             if (response.credential) {
@@ -55,9 +58,19 @@ export const Navbar: React.FC = () => {
       return;
     }
 
-    // Interactive Institutional Login Modal for staging/testing
+    const isDevMockAllowed =
+      import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_AUTH === 'true';
+
+    if (!isDevMockAllowed) {
+      alert(
+        'Google Sign-In is initializing or blocked by an ad-blocker. Please ensure Google scripts are allowed and you are signed into your official VIT Google account (@vitstudent.ac.in).'
+      );
+      return;
+    }
+
+    // Dev/Test Mock Institutional Login Prompt (only in development or explicit test mode)
     const emailPrompt = window.prompt(
-      'Sign in with your VIT Student Google Account:\nEnter your institutional email (e.g., 21bce1001@vitstudent.ac.in):',
+      'Sign in with your VIT Student Google Account (Test Mode):\nEnter your institutional email (e.g., 21bce1001@vitstudent.ac.in):',
       '21bce1001@vitstudent.ac.in'
     );
     if (!emailPrompt) return;

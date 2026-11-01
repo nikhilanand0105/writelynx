@@ -135,9 +135,13 @@ class RetentionService:
         - Uploaded reference sources
         - Uploaded third-party detector PDFs
         """
+        from backend.app.services.storage_adapter import get_storage_adapter
+        adapter = get_storage_adapter()
+
         # 1. Primary file
         if doc.file_path:
             p = Path(doc.file_path)
+            adapter.delete_file(f"documents/{p.name}")
             if p.exists() and p.is_file():
                 try:
                     p.unlink()
@@ -147,6 +151,7 @@ class RetentionService:
         # 2. Detector PDF
         if doc.detector_pdf_path:
             p = Path(doc.detector_pdf_path)
+            adapter.delete_file(f"reports/{p.name}")
             if p.exists() and p.is_file():
                 try:
                     p.unlink()
@@ -158,6 +163,7 @@ class RetentionService:
         for exp in exports:
             if exp.file_path:
                 p = Path(exp.file_path)
+                adapter.delete_file(f"exports/{p.name}")
                 if p.exists() and p.is_file():
                     try:
                         p.unlink()
@@ -169,6 +175,7 @@ class RetentionService:
         for src in sources:
             if src.file_path:
                 p = Path(src.file_path)
+                adapter.delete_file(f"sources/{p.name}")
                 if p.exists() and p.is_file():
                     try:
                         p.unlink()

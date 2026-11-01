@@ -73,18 +73,27 @@ def run_acceptance_test():
     job_id = r11.json()["job_id"]
     print(f"Step 11: [PASS] Durable analysis queued: job_id={job_id}.")
 
-    # Wait for completion (fast with local rule engine)
-    for _ in range(20):
+    # Wait for durable worker or background task completion
+    completed = False
+    for _ in range(40):
         time.sleep(0.5)
-        r_poll = client.get(f"{BASE_URL}/documents/{doc_id}/analysis/status", headers=headers_a)
-        if r_poll.json()["status"] == "ready":
-            break
+        r_job = client.get(f"{BASE_URL}/jobs/{job_id}", headers=headers_a)
+        if r_job.status_code == 200:
+            j_data = r_job.json()
+            if j_data.get("status") == "completed":
+                completed = True
+                assert j_data.get("progress") == 100
+                break
+            elif j_data.get("status") in ("failed", "cancelled"):
+                raise RuntimeError(f"Analysis job {job_id} terminated prematurely with status: {j_data.get('status')} ({j_data.get('error_message')})")
+
+    assert completed, f"Analysis job {job_id} did not reach 'completed' state within timeout."
 
     # 12. Processing completes within budget
     r12 = client.get(f"{BASE_URL}/documents/{doc_id}/analysis", headers=headers_a)
     assert r12.status_code == 200
     findings = r12.json()["findings"]
-    print(f"Step 12: [PASS] Diagnostics complete within budget. Generated {len(findings)} findings.")
+    print(f"Step 12: [PASS] Analysis job {job_id} reached 100% completion. Generated {len(findings)} findings.")
 
     # 13. Editing suggestions displayed
     r13 = client.get(f"{BASE_URL}/documents/{doc_id}/suggestions", headers=headers_a)

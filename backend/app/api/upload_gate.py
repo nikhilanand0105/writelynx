@@ -243,10 +243,22 @@ async def authorized_upload(
         )
         db.add(block)
 
-    # 8. Transition Entitlement to READY and Mark Token Consumed
+    # 8. Atomically Transition Entitlement to READY and Mark Token Consumed (Item 12)
+    rows_updated = db.query(UploadReservation).filter(
+        UploadReservation.id == reservation.id,
+        UploadReservation.is_consumed == False,
+    ).update({"is_consumed": True})
+
+    if rows_updated == 0:
+        db.rollback()
+        promoted_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload reservation token was already consumed by a concurrent request."
+        )
+
     entitlement.document_id = doc_id
     entitlement.status = "READY"
-    reservation.is_consumed = True
     db.commit()
 
     return {
